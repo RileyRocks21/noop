@@ -1,0 +1,62 @@
+# Fork-only: on-demand unsigned iOS build with the Nutrition tab, packaged as a sideload-ready IPA.
+#
+# Mirrors the iOS leg of fork-testing-build.yml, plus ONE addition: the Google service-account JSON
+# is written from the GOOGLE_SERVICE_ACCOUNT_JSON secret into the app bundle before xcodegen runs,
+# so the Nutrition tab can read your sheet. The file is gitignored and never committed. If the
+# secret is absent the build still succeeds — the app just shows the Nutrition setup card until
+# you drop the JSON into the app's Documents folder via Files.
+#
+# Sideload the IPA with AltStore / Sideloadly (they re-sign with your own Apple ID).
+name: Nutrition iOS build (fork)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ios:
+    # iOS 26 Liquid Glass needs the iOS 26 SDK → Xcode 26 → macos-26 (same as fork-testing-build).
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Inject Google service-account credential (from secret, never committed)
+        env:
+          GSA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "${GSA_JSON:-}" ]; then
+            printf '%s' "$GSA_JSON" > StrandiOS/Resources/GoogleServiceAccount.json
+            echo "Credential injected ($(wc -c < StrandiOS/Resources/GoogleServiceAccount.json | tr -d ' ') bytes)."
+          else
+            echo "::warning::GOOGLE_SERVICE_ACCOUNT_JSON secret not set — the Nutrition tab will show its setup card until the JSON is provided."
+          fi
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build NOOPiOS for device (unsigned, Release)
+        # Release, not Debug: a Debug build carries get-task-allow and fails "integrity could not be
+        # verified" after sideload re-signing (see fork-testing-build.yml #53).
+        run: >-
+          xcodebuild -scheme NOOPiOS -configuration Release -destination 'generic/platform=iOS'
+          -derivedDataPath build/dd
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          build
+      - name: Package sideload .ipa (strip watch, preserve widget capabilities)
+        run: |
+          APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
+          test -n "$APP" || { echo ".app (iphoneos) not found"; exit 1; }
+          rm -rf "$APP/Watch"
+          test -d "$APP/PlugIns/NOOPWidgets.appex" || { echo "NOOPWidgets.appex missing"; exit 1; }
+          test -f "$APP/GoogleServiceAccount.json" && echo "credential is in the bundle" \
+            || echo "::warning::credential NOT in bundle — Nutrition tab will need the Documents drop-in"
+          Tools/prepare-ios-sideload-app.sh "$APP"
+          VER=$(grep -m1 'MARKETING_VERSION' project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qr "NOOP-nutrition-ios-unsigned-v${VER}.ipa" Payload
+          echo "IPA=NOOP-nutrition-ios-unsigned-v${VER}.ipa" >> "$GITHUB_ENV"
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: noop-nutrition-ipa
+          path: ${{ env.IPA }}
+          retention-days: 14
