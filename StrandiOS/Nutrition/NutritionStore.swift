@@ -108,7 +108,7 @@ final class NutritionStore: ObservableObject {
             return NutritionMath.dayKey(d)
         }
         guard let s0 = raw as? String else { return nil }
-        let s = s.trimmingCharacters(in: .whitespaces)
+        let s = s0.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return nil }
         if let d = NutritionMath.dayFormatter.date(from: s) { return NutritionMath.dayKey(d) }
         // Fallback shapes for sheets whose Date column is formatted differently.

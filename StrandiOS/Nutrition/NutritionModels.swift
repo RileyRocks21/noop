@@ -110,7 +110,7 @@ enum NutritionMath {
 
     static func totals(forDate target: String, in entries: [MealEntry]) -> NutritionDayTotals {
         var t = NutritionDayTotals(date: target)
-        t.meals = entries(forDate: target, in: entries)
+        t.meals = Self.entries(forDate: target, in: entries)
         for m in t.meals {
             t.calories += m.calories
             t.proteinG += m.proteinG
