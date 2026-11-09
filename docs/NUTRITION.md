@@ -1,33 +1,36 @@
-# Nutrition tab (Google Sheets intake vs burn)
+# Nutrition tab (in-app AI logging, intake vs burn)
 
-The **Nutrition** tab reads your "Nutrition & Macro Tracker Logs" Google Sheet and lines it up
-against the day's burn (profile BMR + strap/Apple-Health active energy).
+The **Nutrition** tab logs meals directly in the app and lines intake up against the day's burn
+(profile BMR + strap/Apple-Health active energy). No spreadsheet in the loop.
 
-## Sheet schema
+## Logging a meal (tap + on the Nutrition tab)
 
-| Date | Meal Name | Calories | Protein (g) | Carbs (g) | Fat (g) | Notes |
-|------|-----------|----------|-------------|-----------|---------|-------|
+| Path | Cost | Notes |
+|------|------|-------|
+| **Describe** ("chicken burrito bowl, large") | fractions of a cent | gemini-flash-lite / Claude Haiku |
+| **Photo** (camera or library, optional hint) | under a cent | image downscaled to 1024px to stay cheap |
+| **Barcode** | **free** | on-device Vision scan → Open Food Facts lookup, no AI |
+| **Manual** | free | type the numbers |
+| **Recent meals** | free | one-tap re-log of anything you've logged before |
 
-Dates are read as `YYYY-MM-DD` text, common locale date formats, or Sheets serial numbers.
+Every AI/barcode result lands in an **editable review card** — nothing is saved until you confirm.
+Meals are stored on-device in `Documents/nutrition_log.json` (visible/backable-up via Files).
 
-## One-time Google setup
+## AI key (BYOK, shared with the AI Coach)
 
-1. **Enable the Sheets API** — open
-   <https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=vmformarketdata>
-   and click **Enable**.
-2. **Share the sheet** — in Google Sheets, Share → add
-   `appwhoop@vmformarketdata.iam.gserviceaccount.com` as **Viewer**.
+Nutrition tab → gear → **AI estimation**: pick the provider and paste a key. It's the same
+Keychain slot the AI Coach uses, so a key saved there works here.
 
-## Getting the credential into the app
+- **Cheapest:** a free Google AI Studio key (https://aistudio.google.com) — text estimates run on
+  `gemini-flash-lite`, photos on `gemini-flash`.
+- Anthropic estimates run on `claude-haiku-4-5`. OpenAI on `gpt-4o-mini`.
 
-The service-account JSON is **never committed** (`StrandiOS/Resources/GoogleServiceAccount.json`
-is gitignored). Two ways in:
+## Google Sheet history (one-time import)
 
-- **CI (recommended):** repo Settings → Secrets and variables → Actions →
-  `GOOGLE_SERVICE_ACCOUNT_JSON` = the full JSON file contents. The
-  *Nutrition iOS build (fork)* workflow injects it into the bundle at build time.
-- **On device:** drop a file named exactly `GoogleServiceAccount.json` into the app's
-  Documents folder via the Files app (the app exposes Documents). It overrides the bundled copy.
+Nutrition settings → "Import history from sheet now" pulls your old "Nutrition & Macro Tracker
+Logs" rows into the local log (deduped). Needs the Sheets API enabled, the sheet shared with the
+service-account email, and `GoogleServiceAccount.json` in the bundle (CI secret
+`GOOGLE_SERVICE_ACCOUNT_JSON`) or the app's Documents folder.
 
 ## Build the IPA
 
@@ -38,17 +41,18 @@ AltStore / Sideloadly (they re-sign with your Apple ID).
 ## Editable in the app
 
 - Nutrition tab → gear: weekday/weekend calorie targets (defaults 2,350 / 3,050 kcal),
-  protein floor (200 g), deficit goal (350 kcal), spreadsheet ID.
+  protein floor (200 g), deficit goal (350 kcal), AI provider + key, sheet import.
 - More → Settings → Profile: sex, date of birth, height, weight (the BMR inputs).
 
 ## Files
 
-- `StrandiOS/Nutrition/NutritionModels.swift` — models + the three spec functions
-  (`entries(forDate:)` / `balance(forDate:)` / `weeklySummary(...)`) + Mifflin–St Jeor.
-- `StrandiOS/Nutrition/GoogleSheetsService.swift` — service-account JWT (RS256 via Security
-  framework) → OAuth token → Sheets v4 values. No third-party dependencies.
-- `StrandiOS/Nutrition/NutritionStore.swift` — fetch, parse, on-disk cache.
+- `StrandiOS/Nutrition/NutritionModels.swift` — models + balance/weekly-summary math + Mifflin–St Jeor.
+- `StrandiOS/Nutrition/NutritionStore.swift` — local meal log (CRUD, JSON persistence) + sheet import.
+- `StrandiOS/Nutrition/MealEstimator.swift` — Gemini / Anthropic / OpenAI text + photo estimates (strict JSON).
+- `StrandiOS/Nutrition/BarcodeScannerView.swift` — Vision barcode capture + Open Food Facts lookup.
+- `StrandiOS/Nutrition/LogMealView.swift` — the Log Meal sheet (four capture paths + review card).
 - `StrandiOS/Nutrition/NutritionView.swift` — the tab (day nav, balance, macros, 7-day trend,
   weekly summary, meal list).
 - `StrandiOS/Nutrition/NutritionSettingsView.swift` — the settings sheet.
+- `StrandiOS/Nutrition/GoogleSheetsService.swift` — service-account Sheets reader (import only).
 - `.github/workflows/nutrition-ipa.yml` — the unsigned IPA build.

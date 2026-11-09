@@ -5,10 +5,11 @@ import StrandDesign
 
 // MARK: - Nutrition tab
 //
-// Reads the "Nutrition & Macro Tracker Logs" Google Sheet (via GoogleSheetsService) and lines it
-// up against the day's burn: Mifflin–St Jeor BMR from the shared ProfileStore (edited in Settings →
-// Profile) plus the strap/Apple-Health active energy already banked in the Repository. Targets
-// (weekday/weekend kcal, protein floor, deficit goal) are editable in the tab's own settings sheet.
+// Meals are logged in-app (manual / AI text / AI photo / barcode — see LogMealView) into the local
+// NutritionStore, and lined up against the day's burn: Mifflin–St Jeor BMR from the shared
+// ProfileStore (edited in Settings → Profile) plus the strap/Apple-Health active energy already
+// banked in the Repository. Targets (weekday/weekend kcal, protein floor, deficit goal) are
+// editable in the tab's own settings sheet. Google Sheet history comes in via a one-time import.
 
 struct NutritionView: View {
     @EnvironmentObject private var repo: Repository
@@ -20,11 +21,11 @@ struct NutritionView: View {
     @AppStorage("noop.nutrition.weekendKcal") private var weekendKcal = 3050.0
     @AppStorage("noop.nutrition.proteinFloor") private var proteinFloor = 200.0
     @AppStorage("noop.nutrition.deficitGoal") private var deficitGoal = 350.0
-    @AppStorage("noop.nutrition.spreadsheetID") private var spreadsheetID = GoogleSheetsService.defaultSpreadsheetID
 
     /// 0 = today, 1 = yesterday, … Day navigation stays offset-based so it survives refetches.
     @State private var dayOffset = 0
     @State private var showSettings = false
+    @State private var showLog = false
 
     private var selectedDayKey: String {
         let d = Calendar.current.date(byAdding: .day, value: -dayOffset, to: Date()) ?? Date()
@@ -41,24 +42,33 @@ struct NutritionView: View {
 
     var body: some View {
         ScreenScaffold(title: "Nutrition",
-                       subtitle: "Intake from your sheet vs your burn",
-                       onRefresh: { await refreshAll() },
+                       subtitle: "Intake vs your burn",
+                       onRefresh: { await repo.refresh() },
                        topBackground: liquidScaffoldSky(),
                        trailing: {
-                           Button { showSettings = true } label: {
-                               Image(systemName: "gearshape")
-                                   .font(.system(size: 17, weight: .semibold))
-                                   .foregroundStyle(StrandPalette.accent)
+                           HStack(spacing: 16) {
+                               Button { showLog = true } label: {
+                                   Image(systemName: "plus.circle.fill")
+                                       .font(.system(size: 20, weight: .semibold))
+                                       .foregroundStyle(StrandPalette.accent)
+                               }
+                               .accessibilityLabel("Log meal")
+                               Button { showSettings = true } label: {
+                                   Image(systemName: "gearshape")
+                                       .font(.system(size: 17, weight: .semibold))
+                                       .foregroundStyle(StrandPalette.accent)
+                               }
+                               .accessibilityLabel("Nutrition settings")
                            }
-                           .accessibilityLabel("Nutrition settings")
                        }) {
-            if !store.hasCredentials {
-                setupCard
-            } else if let error = store.errorMessage {
-                errorCard(error)
+            if let info = store.infoMessage {
+                infoCard(info, symbol: "checkmark.circle.fill")
             }
-            if store.isLoading {
-                StatePill("Syncing sheet…", tone: .accent, pulsing: true)
+            if let error = store.errorMessage {
+                infoCard(error, symbol: "exclamationmark.triangle.fill")
+            }
+            if store.isImporting {
+                StatePill("Importing from sheet…", tone: .accent, pulsing: true)
             }
 
             dayNav
@@ -68,28 +78,15 @@ struct NutritionView: View {
             weeklyCard
             mealsCard
         }
-        .task { await refreshAll() }
+        .task { await repo.refresh() }
         .sheet(isPresented: $showSettings) { NutritionSettingsView() }
+        .sheet(isPresented: $showLog) { LogMealView(dayKey: selectedDayKey, store: store) }
     }
 
-    private func refreshAll() async {
-        // Detached: SwiftUI cancels the .task/.refreshable task when the view re-renders or the
-        // gesture ends, which used to kill the in-flight fetch ("sync failed: cancelled").
-        store.refreshDetached(spreadsheetID: spreadsheetID)
-        await repo.refresh()
-    }
+    // MARK: - Info / error states
 
-    // MARK: - Setup / error states
-
-    private var setupCard: some View {
-        DataPendingNote(
-            title: "Connect your sheet",
-            message: "Drop GoogleServiceAccount.json into this app's Documents folder via the Files app (or build with the CI secret), make sure the Google Sheets API is enabled, and share the sheet with your service-account email. Then pull to refresh.",
-            symbol: "key.fill")
-    }
-
-    private func errorCard(_ message: String) -> some View {
-        DataPendingNote(title: "Sheet sync failed", message: LocalizedStringKey(message), symbol: "exclamationmark.triangle.fill")
+    private func infoCard(_ message: String, symbol: String) -> some View {
+        DataPendingNote(title: "Nutrition", message: LocalizedStringKey(message), symbol: symbol)
     }
 
     // MARK: - Day navigation
@@ -137,10 +134,6 @@ struct NutritionView: View {
                     Text(NutritionMath.isWeekend(selectedDayKey) ? "WEEKEND TARGET" : "WEEKDAY TARGET")
                         .strandOverline()
                     Spacer()
-                    if let lastSync = store.lastSync {
-                        Text("Synced \(lastSync, style: .relative) ago")
-                            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    }
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -342,14 +335,22 @@ struct NutritionView: View {
     // MARK: - Meals list
 
     private var mealsCard: some View {
-        let meals = NutritionMath.entries(forDate: selectedDayKey, in: store.entries)
+        let meals = store.meals.filter { $0.date == selectedDayKey }
         return NoopCard(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("MEALS").strandOverline().padding(16)
+                HStack {
+                    Text("MEALS").strandOverline()
+                    Spacer()
+                    Button { showLog = true } label: {
+                        Label("Log", systemImage: "plus")
+                            .font(StrandFont.subhead)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(StrandPalette.accent)
+                }
+                .padding(16)
                 if meals.isEmpty {
-                    Text(store.hasCredentials
-                         ? "No meals logged for this day in the sheet."
-                         : "Connect the sheet to see your meals.")
+                    Text("Nothing logged for this day — tap + to describe, photograph or scan a meal.")
                         .font(StrandFont.subhead).foregroundStyle(StrandPalette.textTertiary)
                         .padding(.horizontal, 16).padding(.bottom, 16)
                 } else {
@@ -375,6 +376,12 @@ struct NutritionView: View {
                             .padding(.horizontal, 16).padding(.vertical, 10)
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(StrandPalette.hairline).frame(height: 1).padding(.leading, 16)
+                            }
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button(role: .destructive) { store.delete(id: meal.id) } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
                         }
                     }

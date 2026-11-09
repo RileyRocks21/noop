@@ -1,99 +1,142 @@
 #if os(iOS)
 import Foundation
 
-// MARK: - Nutrition store: fetch → parse → cache
+// MARK: - Nutrition store: local meal log (the source of truth)
 //
-// Owns the sheet rows for the Nutrition tab. Pulls via GoogleSheetsService, parses into MealEntry,
-// and caches to Documents/nutrition_cache.json so the tab opens instantly and works offline.
+// Meals are logged IN the app now (manual / AI text / AI photo / barcode) and stored on-device as
+// JSON in Documents/nutrition_log.json. The Google Sheet path survives as an explicit one-time
+// import (importFromSheet) so existing history carries across; it is no longer the live source.
+
+/// One logged meal. Distinct from MealEntry by carrying a stable UUID (two identical meals on one
+/// day must not share a SwiftUI id) plus provenance + creation time.
+struct LoggedMeal: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var date: String        // YYYY-MM-DD local day key
+    var name: String
+    var calories: Double
+    var proteinG: Double
+    var carbsG: Double
+    var fatG: Double
+    var notes: String
+    var source: String      // "manual" | "ai-text" | "ai-photo" | "barcode" | "sheet"
+    var createdAt = Date()
+
+    var asMealEntry: MealEntry {
+        MealEntry(date: date, name: name, calories: calories,
+                  proteinG: proteinG, carbsG: carbsG, fatG: fatG, notes: notes)
+    }
+}
 
 @MainActor
 final class NutritionStore: ObservableObject {
-    @Published private(set) var entries: [MealEntry] = []
-    @Published private(set) var lastSync: Date?
-    @Published private(set) var isLoading = false
-    @Published var errorMessage: String?
-
-    /// One shared instance: the fetch must outlive any single view's task (see refreshDetached).
     static let shared = NutritionStore()
 
-    /// True when a service-account credential is reachable (bundle resource or Documents drop-in).
-    var hasCredentials: Bool { GoogleServiceAccount.load() != nil }
+    @Published private(set) var meals: [LoggedMeal] = []
+    @Published var errorMessage: String?
+    @Published var infoMessage: String?
+    @Published private(set) var isImporting = false
 
-    private var cacheURL: URL? {
+    /// View-facing projection: the NutritionMath functions operate on MealEntry.
+    var entries: [MealEntry] { meals.map(\.asMealEntry) }
+
+    /// Most-recent distinct meal names for the quick re-log list (free — no AI call).
+    var recentMeals: [LoggedMeal] {
+        var seen = Set<String>()
+        var out: [LoggedMeal] = []
+        for m in meals.sorted(by: { $0.createdAt > $1.createdAt }) {
+            let key = m.name.lowercased()
+            if seen.insert(key).inserted { out.append(m) }
+            if out.count == 10 { break }
+        }
+        return out
+    }
+
+    private var storeURL: URL? {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("nutrition_cache.json")
+            .appendingPathComponent("nutrition_log.json")
     }
 
-    private struct Cache: Codable {
-        let syncedAt: Date
-        let entries: [MealEntry]
+    private init() { load() }
+
+    // MARK: Persistence
+
+    private func load() {
+        guard let url = storeURL, let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([LoggedMeal].self, from: data) else { return }
+        meals = decoded.sorted { ($0.date, $0.createdAt) < ($1.date, $1.createdAt) }
     }
 
-    private init() { loadCache() }
-
-    /// Load cached rows so the tab renders immediately; callers then refresh() for freshness.
-    func loadCache() {
-        guard let url = cacheURL, let data = try? Data(contentsOf: url),
-              let cache = try? JSONDecoder().decode(Cache.self, from: data) else { return }
-        entries = cache.entries
-        lastSync = cache.syncedAt
+    private func persist() {
+        guard let url = storeURL,
+              let data = try? JSONEncoder().encode(meals) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
-    /// Fire-and-forget refresh for SwiftUI callers. `.task` and `.refreshable` run in a task SwiftUI
-    /// CANCELS when the view re-renders or the refresh gesture ends — and a cancelled parent kills
-    /// the in-flight URLSession request with URLError.cancelled ("sheet sync failed: cancelled").
-    /// An unstructured Task is not tied to that lifetime, so the fetch always runs to completion.
-    func refreshDetached(spreadsheetID: String) {
-        Task { await refresh(spreadsheetID: spreadsheetID) }
+    // MARK: CRUD
+
+    func add(_ meal: LoggedMeal) {
+        meals.append(meal)
+        meals.sort { ($0.date, $0.createdAt) < ($1.date, $1.createdAt) }
+        persist()
     }
 
-    /// Pull the whole sheet and re-parse. Errors land in `errorMessage`; stale cache stays on screen.
-    func refresh(spreadsheetID: String) async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
+    func update(_ meal: LoggedMeal) {
+        guard let i = meals.firstIndex(where: { $0.id == meal.id }) else { return }
+        meals[i] = meal
+        persist()
+    }
+
+    func delete(id: UUID) {
+        meals.removeAll { $0.id == id }
+        persist()
+    }
+
+    // MARK: One-time Google Sheet import
+
+    /// Pulls the sheet once and merges rows not already present (dedupe on date+name+rounded
+    /// calories). Returns nothing; reports via infoMessage/errorMessage.
+    func importFromSheet(spreadsheetID: String) async {
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         do {
-            let rows = try await fetchWithRetry(spreadsheetID: spreadsheetID)
-            let parsed = Self.parse(rows)
-            entries = parsed
-            lastSync = Date()
-            errorMessage = nil
-            if let url = cacheURL,
-               let data = try? JSONEncoder().encode(Cache(syncedAt: Date(), entries: parsed)) {
-                try? data.write(to: url, options: .atomic)
+            let rows = try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
+            let parsed = Self.parseSheet(rows)
+            var existing = Set(meals.map { "\($0.date)|\($0.name.lowercased())|\(Int($0.calories.rounded()))" })
+            var added = 0
+            for e in parsed {
+                let key = "\(e.date)|\(e.name.lowercased())|\(Int(e.calories.rounded()))"
+                guard existing.insert(key).inserted else { continue }
+                meals.append(LoggedMeal(date: e.date, name: e.name, calories: e.calories,
+                                        proteinG: e.proteinG, carbsG: e.carbsG, fatG: e.fatG,
+                                        notes: e.notes, source: "sheet"))
+                added += 1
             }
+            meals.sort { ($0.date, $0.createdAt) < ($1.date, $1.createdAt) }
+            persist()
+            errorMessage = nil
+            infoMessage = added > 0
+                ? "Imported \(added) meal\(added == 1 ? "" : "s") from the sheet."
+                : "Sheet read OK — nothing new to import."
         } catch {
             errorMessage = Self.describe(error)
         }
     }
 
-    /// One automatic retry after a beat for transient cancellation; then the error surfaces.
-    private func fetchWithRetry(spreadsheetID: String) async throws -> [[Any]] {
-        do {
-            return try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
-        } catch let e as URLError where e.code == .cancelled {
-            try await Task.sleep(nanoseconds: 600_000_000)
-            return try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
-        }
-    }
-
-    /// Errors users can act on. URLError carries almost nothing in localizedDescription ("cancelled"),
-    /// so append the domain/code for support.
+    /// Errors users can act on. URLError carries almost nothing in localizedDescription
+    /// ("cancelled"), so append the domain/code for support.
     static func describe(_ error: Error) -> String {
         if let urlError = error as? URLError {
-            if urlError.code == .cancelled {
-                return "The request was cancelled before it finished — pull to refresh to try again. (NSURLErrorDomain \(urlError.code.rawValue))"
-            }
             return "\(urlError.localizedDescription) (NSURLErrorDomain \(urlError.code.rawValue))"
         }
         return error.localizedDescription
     }
 
-    // MARK: - Parsing
+    // MARK: - Sheet parsing (import path)
 
     /// Sheet rows → entries. Skips the header row; tolerates short rows, thousand separators,
     /// and dates given as text (YYYY-MM-DD and common locale shapes) or Sheets serial numbers.
-    static func parse(_ rows: [[Any]]) -> [MealEntry] {
+    static func parseSheet(_ rows: [[Any]]) -> [MealEntry] {
         var out: [MealEntry] = []
         for row in rows {
             func cell(_ i: Int) -> Any? { i < row.count ? row[i] : nil }
@@ -129,8 +172,8 @@ final class NutritionStore: ObservableObject {
         return out.sorted { ($0.date, $0.name) < ($1.date, $1.name) }
     }
 
-    /// Normalise a date cell to YYYY-MM-DD. Accepts strings ("2026-11-08", "11/8/2026", "8/11/2026"
-    /// when unambiguous, "Nov 8 2026"…) and Sheets/Excel serial numbers (days since 1899-12-30).
+    /// Normalise a date cell to YYYY-MM-DD. Accepts strings ("2026-11-08", "11/8/2026", "8/11/2026",
+    /// "Nov 8 2026"…) and Sheets/Excel serial numbers (days since 1899-12-30).
     private static func normalizeDate(_ raw: Any) -> String? {
         if let n = raw as? NSNumber {
             // Sheets serial day number.
