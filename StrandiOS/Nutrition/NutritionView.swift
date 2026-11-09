@@ -13,7 +13,7 @@ import StrandDesign
 struct NutritionView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var profile: ProfileStore
-    @StateObject private var store = NutritionStore()
+    @ObservedObject private var store = NutritionStore.shared
 
     // Editable targets — the spec's defaults.
     @AppStorage("noop.nutrition.weekdayKcal") private var weekdayKcal = 2350.0
@@ -57,6 +57,9 @@ struct NutritionView: View {
             } else if let error = store.errorMessage {
                 errorCard(error)
             }
+            if store.isLoading {
+                StatePill("Syncing sheet…", tone: .accent, pulsing: true)
+            }
 
             dayNav
             balanceCard
@@ -70,7 +73,9 @@ struct NutritionView: View {
     }
 
     private func refreshAll() async {
-        await store.refresh(spreadsheetID: spreadsheetID)
+        // Detached: SwiftUI cancels the .task/.refreshable task when the view re-renders or the
+        // gesture ends, which used to kill the in-flight fetch ("sync failed: cancelled").
+        store.refreshDetached(spreadsheetID: spreadsheetID)
         await repo.refresh()
     }
 

@@ -13,6 +13,9 @@ final class NutritionStore: ObservableObject {
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
+    /// One shared instance: the fetch must outlive any single view's task (see refreshDetached).
+    static let shared = NutritionStore()
+
     /// True when a service-account credential is reachable (bundle resource or Documents drop-in).
     var hasCredentials: Bool { GoogleServiceAccount.load() != nil }
 
@@ -26,7 +29,7 @@ final class NutritionStore: ObservableObject {
         let entries: [MealEntry]
     }
 
-    init() { loadCache() }
+    private init() { loadCache() }
 
     /// Load cached rows so the tab renders immediately; callers then refresh() for freshness.
     func loadCache() {
@@ -36,13 +39,21 @@ final class NutritionStore: ObservableObject {
         lastSync = cache.syncedAt
     }
 
+    /// Fire-and-forget refresh for SwiftUI callers. `.task` and `.refreshable` run in a task SwiftUI
+    /// CANCELS when the view re-renders or the refresh gesture ends — and a cancelled parent kills
+    /// the in-flight URLSession request with URLError.cancelled ("sheet sync failed: cancelled").
+    /// An unstructured Task is not tied to that lifetime, so the fetch always runs to completion.
+    func refreshDetached(spreadsheetID: String) {
+        Task { await refresh(spreadsheetID: spreadsheetID) }
+    }
+
     /// Pull the whole sheet and re-parse. Errors land in `errorMessage`; stale cache stays on screen.
     func refresh(spreadsheetID: String) async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            let rows = try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
+            let rows = try await fetchWithRetry(spreadsheetID: spreadsheetID)
             let parsed = Self.parse(rows)
             entries = parsed
             lastSync = Date()
@@ -52,8 +63,30 @@ final class NutritionStore: ObservableObject {
                 try? data.write(to: url, options: .atomic)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.describe(error)
         }
+    }
+
+    /// One automatic retry after a beat for transient cancellation; then the error surfaces.
+    private func fetchWithRetry(spreadsheetID: String) async throws -> [[Any]] {
+        do {
+            return try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
+        } catch let e as URLError where e.code == .cancelled {
+            try await Task.sleep(nanoseconds: 600_000_000)
+            return try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
+        }
+    }
+
+    /// Errors users can act on. URLError carries almost nothing in localizedDescription ("cancelled"),
+    /// so append the domain/code for support.
+    static func describe(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            if urlError.code == .cancelled {
+                return "The request was cancelled before it finished — pull to refresh to try again. (NSURLErrorDomain \(urlError.code.rawValue))"
+            }
+            return "\(urlError.localizedDescription) (NSURLErrorDomain \(urlError.code.rawValue))"
+        }
+        return error.localizedDescription
     }
 
     // MARK: - Parsing
