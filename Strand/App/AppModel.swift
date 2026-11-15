@@ -1832,6 +1832,16 @@ final class AppModel: ObservableObject {
             FindPhoneSound.play()
             buzz(loops: 1)   // confirm the strap got the tap
             #endif
+        case .openGemini:
+            // iOS-only: launches the Gemini app via its URL scheme, falling back to its App Store
+            // page when it isn't installed. Not offered in the macOS picker.
+            #if os(iOS)
+            if let url = URL(string: "googlegemini://"), UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+            } else if let store = URL(string: "https://apps.apple.com/app/id6477489729") {
+                UIApplication.shared.open(store)
+            }
+            #endif
         case .runShortcut: MacActions.runShortcut(shortcut)
         }
     }

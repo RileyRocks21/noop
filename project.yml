@@ -333,6 +333,11 @@ targets:
         # (noop://oura/callback) reaches OuraOAuthProvider instead of bouncing off the OS.
         CFBundleURLTypes:
           - CFBundleURLSchemes: [noop]
+        # Lets the strap double-tap "Open the Gemini app" action (MacActionKind.openGemini) check
+        # whether Gemini is installed before trying its URL scheme — iOS answers canOpenURL only
+        # for schemes declared here.
+        LSApplicationQueriesSchemes:
+          - googlegemini
     entitlements:
       path: StrandiOS/Resources/NOOP.entitlements
       properties:

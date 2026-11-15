@@ -444,13 +444,13 @@ struct AutomationsView: View {
     // MARK: - Helpers
 
     /// Double-tap actions offered in the picker. The "Lock the Mac" action can't work on iPhone
-    /// (a third-party app can't lock iOS), so it's dropped there; "Find iPhone" is iOS-only (it plays
-    /// the bundled siren), so it's dropped on macOS.
+    /// (a third-party app can't lock iOS), so it's dropped there; "Find iPhone" and "Open Gemini"
+    /// are iOS-only, so they're dropped on macOS.
     private var doubleTapOptions: [MacActionKind] {
         #if os(iOS)
         MacActionKind.allCases.filter { $0 != .lockScreen }
         #else
-        MacActionKind.allCases.filter { $0 != .findPhone }
+        MacActionKind.allCases.filter { $0 != .findPhone && $0 != .openGemini }
         #endif
     }
 

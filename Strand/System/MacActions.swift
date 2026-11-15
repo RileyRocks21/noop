@@ -12,6 +12,7 @@ enum MacActionKind: String, Codable, CaseIterable, Identifiable {
     case sleepMark
     case hapticClock
     case findPhone
+    case openGemini
     case runShortcut
 
     var id: String { rawValue }
@@ -24,6 +25,7 @@ enum MacActionKind: String, Codable, CaseIterable, Identifiable {
         case .sleepMark:   return String(localized: "Log a sleep mark")
         case .hapticClock: return String(localized: "Buzz the time")
         case .findPhone:   return String(localized: "Find iPhone (play siren)")
+        case .openGemini:  return String(localized: "Open the Gemini app")
         case .runShortcut: return String(localized: "Run a Shortcut…")
         }
     }
@@ -36,6 +38,7 @@ enum MacActionKind: String, Codable, CaseIterable, Identifiable {
         case .sleepMark:   return "moon.zzz.fill"
         case .hapticClock: return "clock.fill"
         case .findPhone:   return "iphone.radiowaves.left.and.right"
+        case .openGemini:  return "sparkles"
         case .runShortcut: return "bolt.fill"
         }
     }
