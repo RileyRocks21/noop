@@ -5,10 +5,10 @@ import UserNotifications
 // MARK: - Custom countdown timers
 //
 // User-set alarms ("oven 12 min", "meeting in 45"): start one with a label + duration and when it
-// fires the WATCH buzzes (a message over WatchConnectivity — the watch plays a run of notification
-// haptics) and the phone posts a local notification as the backgrounded-app backup. Timers are
-// persisted to UserDefaults so a relaunch keeps them running; on launch any timer that fired while
-// the process was dead delivers its buzz + alert immediately.
+// fires the WHOOP STRAP buzzes (the injected `buzz` closure → AppModel.buzz, 4 loops) and the phone
+// posts a local notification as the backgrounded-app backup. If a watch is ever paired it gets an
+// alert too. Timers are persisted to UserDefaults so a relaunch keeps them running; on launch any
+// timer that fired while the process was dead delivers its buzz + alert immediately.
 
 struct CustomTimer: Codable, Equatable, Identifiable {
     var id = UUID()
@@ -29,6 +29,10 @@ final class CustomTimersStore: ObservableObject {
     /// The label of the timer that just fired while the app was foregrounded — drives the in-app
     /// alert on the timers screen. Cleared when the wearer dismisses it.
     @Published var firedLabel: String?
+
+    /// Injected by the app root (StrandiOSApp): buzzes the WHOOP strap. Kept as a closure so the
+    /// store never has to know about AppModel/BLE (same seam LiftSessionController uses).
+    var buzz: () -> Void = {}
 
     private let defaultsKey = "noop.customTimers"
     private var ticker: Timer?
@@ -102,7 +106,9 @@ final class CustomTimersStore: ObservableObject {
         persist()
         UNUserNotificationCenter.current()
             .removePendingNotificationRequests(withIdentifiers: [Self.notificationID(timer)])
-        // The actual ask: the WATCH buzzes.
+        // The actual ask: the WHOOP strap buzzes. A watch, IF one is paired, also gets the alert
+        // (the message is a no-op without one).
+        buzz()
         WatchSessionBridge.shared.sendMessageToWatch([
             WatchSessionBridge.timerDoneKey: timer.label,
             "duration": timer.durationSeconds

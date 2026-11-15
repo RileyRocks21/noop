@@ -1825,6 +1825,13 @@ final class AppModel: ObservableObject {
         case .markMoment: markMoment()
         case .sleepMark: markSleep()
         case .hapticClock: ble.buzzTimeNow(is24h: Self.localeUses24HourClock)
+        case .findPhone:
+            // iOS-only: plays the bundled two-tone siren at max volume (ignores the mute switch).
+            // Not offered in the macOS picker, so this branch is unreachable there.
+            #if os(iOS)
+            FindPhoneSound.play()
+            buzz(loops: 1)   // confirm the strap got the tap
+            #endif
         case .runShortcut: MacActions.runShortcut(shortcut)
         }
     }

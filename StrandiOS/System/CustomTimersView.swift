@@ -4,9 +4,9 @@ import StrandDesign
 
 // MARK: - Custom timers screen
 //
-// Set a labelled countdown; when it finishes the watch buzzes (CustomTimersStore →
-// WatchSessionBridge.sendMessageToWatch) and the phone posts a local notification as the
-// background backup. Reached from More → App → Timers.
+// Set a labelled countdown; when it finishes the WHOOP strap buzzes (CustomTimersStore's injected
+// buzz closure → AppModel.buzz) and the phone posts a local notification as the background backup.
+// Reached from More → App → Timers.
 
 struct CustomTimersView: View {
     @ObservedObject private var store = CustomTimersStore.shared
@@ -23,7 +23,7 @@ struct CustomTimersView: View {
 
     var body: some View {
         ScreenScaffold(title: "Timers",
-                       subtitle: "Buzzes your watch when done",
+                       subtitle: "Buzzes your strap when done",
                        topBackground: liquidScaffoldSky()) {
             newTimerCard
             if !store.timers.isEmpty {

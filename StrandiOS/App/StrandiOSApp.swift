@@ -83,8 +83,9 @@ struct StrandiOSApp: App {
         // before the first scene so any early-fired notification is presented.
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         // Spin up the custom-timers store at launch so a timer set in a PREVIOUS launch still buzzes
-        // the watch when it fires, even if the wearer never opens the Timers screen this session.
-        _ = CustomTimersStore.shared
+        // the strap when it fires, even if the wearer never opens the Timers screen this session.
+        // 4 loops = the "angry" long buzz, so a finished timer is unmissable.
+        CustomTimersStore.shared.buzz = { [weak model] in model?.buzz(loops: 4) }
         // K5: tapping a scheduled morning-brief notification routes to Coach via the shared NavRouter.
         let router = NavRouter()
         _router = StateObject(wrappedValue: router)
