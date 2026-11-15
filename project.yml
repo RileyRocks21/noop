@@ -268,6 +268,11 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes:
           - bluetooth-central
+          # The Find-iPhone siren must be able to START while the app is backgrounded (the strap's
+          # double-tap arrives over BLE, which bluetooth-central keeps alive). Without the audio mode
+          # iOS refuses to activate a .playback session in the background and the siren silently does
+          # nothing. Sideloaded build, so App Store review scrutiny of this mode doesn't apply.
+          - audio
           # #524: keep recording an outdoor workout's GPS route while the app is backgrounded (screen off),
           # matching Android's foreground-service capture. Required by GpsWorkoutRecorder's
           # allowsBackgroundLocationUpdates; without this mode iOS crashes when background updates start.
