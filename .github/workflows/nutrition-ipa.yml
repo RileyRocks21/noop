@@ -41,11 +41,16 @@ jobs:
           -derivedDataPath build/dd
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
           build
-      - name: Package sideload .ipa (strip watch, preserve widget capabilities)
+      - name: Package sideload .ipa (keep watch app, preserve widget capabilities)
         run: |
           APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
           test -n "$APP" || { echo ".app (iphoneos) not found"; exit 1; }
-          rm -rf "$APP/Watch"
+          # The watch app stays IN: timers buzz the wrist and the watch hosts Find iPhone. Sideloading
+          # an embedded watch app under a free Apple ID is unproven — if your sideload tool chokes on
+          # the Watch directory, delete "$APP/Watch" from Payload before signing and the phone features
+          # still work (you just lose the wrist buzz + triple-tap).
+          test -d "$APP/Watch/NOOPWatch.app" && echo "watch app is in the bundle" \
+            || echo "::warning::watch app NOT in bundle — wrist features unavailable"
           test -d "$APP/PlugIns/NOOPWidgets.appex" || { echo "NOOPWidgets.appex missing"; exit 1; }
           test -f "$APP/GoogleServiceAccount.json" && echo "credential is in the bundle" \
             || echo "::warning::credential NOT in bundle — Nutrition tab will need the Documents drop-in"

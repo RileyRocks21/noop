@@ -14,6 +14,7 @@ struct NutritionSettingsView: View {
     @AppStorage("noop.nutrition.proteinFloor") private var proteinFloor = 200.0
     @AppStorage("noop.nutrition.deficitGoal") private var deficitGoal = 350.0
     @AppStorage("noop.nutrition.spreadsheetID") private var spreadsheetID = GoogleSheetsService.defaultSpreadsheetID
+    @AppStorage(NutritionStore.sheetLiveKey) private var sheetLive = false
     @AppStorage("noop.nutrition.provider") private var providerRaw = AIProvider.gemini.rawValue
 
     @State private var keyInput = ""
@@ -83,16 +84,21 @@ struct NutritionSettingsView: View {
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    Toggle("Keep sheet in sync", isOn: $sheetLive)
+                    if sheetLive {
+                        Text("Sheet rows are pulled on every refresh and counted alongside your in-app log — anything added to the sheet shows up here automatically.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     Button {
                         Task { await store.importFromSheet(spreadsheetID: spreadsheetID) }
                     } label: {
                         Label("Import history from sheet now", systemImage: "square.and.arrow.down")
                     }
-                    .disabled(store.isImporting)
+                    .disabled(store.isImporting || sheetLive)
                 } header: {
-                    Text("Google Sheet (one-time import)")
+                    Text("Google Sheet")
                 } footer: {
-                    Text("Brings your existing log into the app once; new meals are logged in the app. Needs the Sheets API enabled, the sheet shared with the service-account email, and GoogleServiceAccount.json in the bundle (CI secret) or the app's Documents folder.")
+                    Text("Two ways to use the sheet: live sync (counts every sheet row alongside in-app logs — leave Import off, or meals double up) or one-time import (copies history into the app, then you log in-app only). Needs the Sheets API enabled, the sheet shared with the service-account email, and GoogleServiceAccount.json in the bundle (CI secret) or the app's Documents folder.")
                 }
             }
             .navigationTitle("Nutrition settings")

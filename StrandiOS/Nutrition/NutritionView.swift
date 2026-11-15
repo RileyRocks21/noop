@@ -21,6 +21,7 @@ struct NutritionView: View {
     @AppStorage("noop.nutrition.weekendKcal") private var weekendKcal = 3050.0
     @AppStorage("noop.nutrition.proteinFloor") private var proteinFloor = 200.0
     @AppStorage("noop.nutrition.deficitGoal") private var deficitGoal = 350.0
+    @AppStorage(NutritionStore.sheetLiveKey) private var sheetLive = false
 
     /// 0 = today, 1 = yesterday, … Day navigation stays offset-based so it survives refetches.
     @State private var dayOffset = 0
@@ -43,7 +44,12 @@ struct NutritionView: View {
     var body: some View {
         ScreenScaffold(title: "Nutrition",
                        subtitle: "Intake vs your burn",
-                       onRefresh: { await repo.refresh() },
+                       onRefresh: {
+                           await repo.refresh()
+                           // Unstructured task: a `.task`/onRefresh-scoped fetch gets cancelled when the
+                           // view rebuilds and surfaces as "sheet sync failed: cancelled".
+                           Task { await store.syncSheetIfEnabled() }
+                       },
                        topBackground: liquidScaffoldSky(),
                        trailing: {
                            HStack(spacing: 16) {
@@ -70,6 +76,9 @@ struct NutritionView: View {
             if store.isImporting {
                 StatePill("Importing from sheet…", tone: .accent, pulsing: true)
             }
+            if store.isSyncingSheet {
+                StatePill("Syncing sheet…", tone: .accent, pulsing: true)
+            }
 
             dayNav
             balanceCard
@@ -78,7 +87,14 @@ struct NutritionView: View {
             weeklyCard
             mealsCard
         }
-        .task { await repo.refresh() }
+        .task {
+            await repo.refresh()
+            // Unstructured: survives the view's task being cancelled on disappearance.
+            Task { await store.syncSheetIfEnabled() }
+        }
+        .onChange(of: sheetLive) { _, _ in
+            Task { await store.syncSheetIfEnabled() }
+        }
         .sheet(isPresented: $showSettings) { NutritionSettingsView() }
         .sheet(isPresented: $showLog) { LogMealView(dayKey: selectedDayKey, store: store) }
     }
@@ -336,6 +352,7 @@ struct NutritionView: View {
 
     private var mealsCard: some View {
         let meals = store.meals.filter { $0.date == selectedDayKey }
+        let sheetMeals = sheetLive ? store.sheetEntries.filter { $0.date == selectedDayKey } : []
         return NoopCard(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -349,34 +366,16 @@ struct NutritionView: View {
                     .foregroundStyle(StrandPalette.accent)
                 }
                 .padding(16)
-                if meals.isEmpty {
+                if meals.isEmpty && sheetMeals.isEmpty {
                     Text("Nothing logged for this day — tap + to describe, photograph or scan a meal.")
                         .font(StrandFont.subhead).foregroundStyle(StrandPalette.textTertiary)
                         .padding(.horizontal, 16).padding(.bottom, 16)
                 } else {
                     VStack(spacing: 0) {
                         ForEach(meals) { meal in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(meal.name).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                                    Spacer()
-                                    Text("\(Int(meal.calories.rounded())) kcal")
-                                        .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
-                                }
-                                HStack(spacing: 10) {
-                                    Text("P \(Int(meal.proteinG.rounded())) g")
-                                    Text("C \(Int(meal.carbsG.rounded())) g")
-                                    Text("F \(Int(meal.fatG.rounded())) g")
-                                    if !meal.notes.isEmpty {
-                                        Text("· \(meal.notes)").lineLimit(1)
-                                    }
-                                }
-                                .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 10)
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(StrandPalette.hairline).frame(height: 1).padding(.leading, 16)
-                            }
+                            mealRow(name: meal.name, calories: meal.calories,
+                                    protein: meal.proteinG, carbs: meal.carbsG, fat: meal.fatG,
+                                    notes: meal.notes, source: nil)
                             .contentShape(Rectangle())
                             .contextMenu {
                                 Button(role: .destructive) { store.delete(id: meal.id) } label: {
@@ -384,10 +383,49 @@ struct NutritionView: View {
                                 }
                             }
                         }
+                        ForEach(Array(sheetMeals.enumerated()), id: \.offset) { _, entry in
+                            mealRow(name: entry.name, calories: entry.calories,
+                                    protein: entry.proteinG, carbs: entry.carbsG, fat: entry.fatG,
+                                    notes: entry.notes, source: "Sheet")
+                        }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
                 }
             }
+        }
+    }
+
+    /// One meal row. `source` badges rows that came from the Google Sheet (read-only there — they
+    /// can't be deleted here, remove them in the sheet).
+    private func mealRow(name: String, calories: Double, protein: Double, carbs: Double,
+                         fat: Double, notes: String, source: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(name).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                if let source {
+                    Text(source.uppercased())
+                        .font(StrandFont.overline)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(StrandPalette.surfaceInset))
+                }
+                Spacer()
+                Text("\(Int(calories.rounded())) kcal")
+                    .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+            }
+            HStack(spacing: 10) {
+                Text("P \(Int(protein.rounded())) g")
+                Text("C \(Int(carbs.rounded())) g")
+                Text("F \(Int(fat.rounded())) g")
+                if !notes.isEmpty {
+                    Text("· \(notes)").lineLimit(1)
+                }
+            }
+            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(StrandPalette.hairline).frame(height: 1).padding(.leading, 16)
         }
     }
 

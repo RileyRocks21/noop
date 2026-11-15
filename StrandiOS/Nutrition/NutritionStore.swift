@@ -32,12 +32,22 @@ final class NutritionStore: ObservableObject {
     static let shared = NutritionStore()
 
     @Published private(set) var meals: [LoggedMeal] = []
+    /// Live rows pulled from the Google Sheet when the "Keep sheet in sync" toggle is on. NOT merged
+    /// into `meals` (no dedup by design — sheet and in-app log are independent sources), so the
+    /// sheet's full contents replace this array on every successful fetch.
+    @Published private(set) var sheetEntries: [MealEntry] = []
     @Published var errorMessage: String?
     @Published var infoMessage: String?
     @Published private(set) var isImporting = false
+    @Published private(set) var isSyncingSheet = false
 
-    /// View-facing projection: the NutritionMath functions operate on MealEntry.
-    var entries: [MealEntry] { meals.map(\.asMealEntry) }
+    /// AppStorage keys shared with NutritionView / NutritionSettingsView.
+    static let sheetLiveKey = "noop.nutrition.sheetLive"
+    static let spreadsheetIDKey = "noop.nutrition.spreadsheetID"
+
+    /// View-facing projection: the NutritionMath functions operate on MealEntry. When live sheet
+    /// sync is on, sheet rows ride ALONGSIDE the local log — both are food the user ate.
+    var entries: [MealEntry] { meals.map(\.asMealEntry) + sheetEntries }
 
     /// Most-recent distinct meal names for the quick re-log list (free — no AI call).
     var recentMeals: [LoggedMeal] {
@@ -89,6 +99,38 @@ final class NutritionStore: ObservableObject {
     func delete(id: UUID) {
         meals.removeAll { $0.id == id }
         persist()
+    }
+
+    // MARK: Live Google Sheet sync (optional second source)
+
+    /// Fetch + parse the sheet into `sheetEntries`, replacing the previous pull (so re-syncs never
+    /// double-count). Runs in the caller's unstructured task — NutritionView fires this from a plain
+    /// `Task {}` because a SwiftUI `.task` cancels on view disappearance and used to surface as
+    /// "sheet sync failed: cancelled".
+    func syncSheet(spreadsheetID: String) async {
+        guard !isSyncingSheet else { return }
+        isSyncingSheet = true
+        defer { isSyncingSheet = false }
+        do {
+            let rows = try await GoogleSheetsService.shared.fetchRows(spreadsheetID: spreadsheetID)
+            sheetEntries = Self.parseSheet(rows)
+            errorMessage = nil
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    /// The NutritionView entry point: fetch only when the user turned the toggle on. Reads the same
+    /// AppStorage keys the views bind, so no wiring is needed for a settings change to take effect
+    /// on the next appear/refresh. Turning the toggle OFF also clears the pulled rows.
+    func syncSheetIfEnabled() async {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: Self.sheetLiveKey) else {
+            if !sheetEntries.isEmpty { sheetEntries = [] }
+            return
+        }
+        let id = d.string(forKey: Self.spreadsheetIDKey) ?? GoogleSheetsService.defaultSpreadsheetID
+        await syncSheet(spreadsheetID: id)
     }
 
     // MARK: One-time Google Sheet import

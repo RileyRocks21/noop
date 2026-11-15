@@ -22,6 +22,12 @@ import WhoopStore   // DailyMetric (the anchor row's recovery / strain / sleep f
 @MainActor
 final class WatchSessionBridge: NSObject, ObservableObject {
 
+    /// Process-wide instance. StrandiOSApp builds its @StateObject from this, and feature code that
+    /// lives nowhere near the view tree (custom timers firing in the background, the Find-iPhone
+    /// message handler) reaches the watch through the same session instead of spinning up a second
+    /// WCSession.
+    static let shared = WatchSessionBridge()
+
     /// The most recent snapshot we built + sent, surfaced for debug / a Settings "watch sync" readout.
     /// Also one half of the push gate below: a rebuilt snapshot whose headline values match this one is
     /// not worth a budgeted transfer, so `pushLatest` skips it.
@@ -231,6 +237,28 @@ final class WatchSessionBridge: NSObject, ObservableObject {
     static let contextKey = "snapshot"
     /// The message key the watch sends on launch to ask for the latest snapshot right now.
     static let requestLatestKey = "requestLatest"
+    /// The message key the watch sends when the wearer triple-taps the Find iPhone page.
+    static let findPhoneKey = "findPhone"
+    /// The message key a finished custom timer rides under, phone → watch.
+    static let timerDoneKey = "timerDone"
+
+    // MARK: - Outbound messages (timers, alerts)
+
+    /// Fire-and-forget message to the watch. `sendMessage` only lands while the watch app is
+    /// reachable (on-wrist, app open or recently active); a finished timer must not vanish because
+    /// the watch app was asleep, so on failure the same payload queues as `transferUserInfo`, which
+    /// the system delivers and background-wakes the watch app for.
+    func sendMessageToWatch(_ message: [String: Any]) {
+        guard let session, session.activationState == .activated else { return }
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { [weak self] _ in
+                // Not reachable after all — queue it so the watch still buzzes when it wakes.
+                self?.session?.transferUserInfo(message)
+            }
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -263,17 +291,25 @@ extension WatchSessionBridge: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                              didReceiveMessage message: [String: Any],
                              replyHandler: @escaping ([String: Any]) -> Void) {
-        guard message[Self.requestLatestKey] != nil else {
-            replyHandler([:])
+        if message[Self.requestLatestKey] != nil {
+            // Read the last value we mirrored into the shared group and hand it straight back. Done
+            // off the main actor since the request arrives on WC's queue; the app-group read is
+            // process-safe.
+            if let snap = WatchScoreSnapshot.load(), let data = try? JSONEncoder().encode(snap) {
+                replyHandler([Self.contextKey: data])
+            } else {
+                replyHandler([:])
+            }
             return
         }
-        // Read the last value we mirrored into the shared group and hand it straight back. Done off the
-        // main actor since the request arrives on WC's queue; the app-group read is process-safe.
-        if let snap = WatchScoreSnapshot.load(), let data = try? JSONEncoder().encode(snap) {
-            replyHandler([Self.contextKey: data])
-        } else {
-            replyHandler([:])
+        if message[Self.findPhoneKey] != nil {
+            // Triple-tap on the watch's Find iPhone page. Play the siren at max volume (it uses the
+            // .playback category, so the silent switch can't mute it) and confirm immediately.
+            Task { @MainActor in FindPhoneSound.play() }
+            replyHandler(["ok": true])
+            return
         }
+        replyHandler([:])
     }
 }
 #endif

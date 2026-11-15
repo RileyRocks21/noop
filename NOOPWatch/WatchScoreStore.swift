@@ -20,6 +20,13 @@ final class WatchScoreStore: NSObject, ObservableObject, WCSessionDelegate {
     /// The latest snapshot the watch knows about. nil = nothing has ever synced (fresh install).
     @Published private(set) var snapshot: WatchScoreSnapshot?
 
+    /// The label of a custom timer that just finished on the phone — drives the alert + haptic
+    /// burst in WatchRootView. Cleared when the wearer dismisses the alert.
+    @Published var timerAlert: String?
+
+    /// True briefly after a Find-iPhone ping was sent, so the actions page can confirm.
+    @Published var findPhoneSent = false
+
     /// The shared App Group suite the watch app + its complication both read/write. `Bundle.main` is
     /// process-global, so this is exactly the lookup `WatchScoreSnapshot.appGroupId` itself performs —
     /// deferring to it directly (rather than repeating the lookup here) keeps the resolution in ONE
@@ -100,6 +107,39 @@ final class WatchScoreStore: NSObject, ObservableObject, WCSessionDelegate {
         if let snap = decode(from: applicationContext) {
             apply(snap)
         }
+    }
+
+    /// A finished custom timer arrives as a live message when the watch app is reachable.
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        handleTimerDone(message)
+    }
+
+    /// …and as a queued user-info transfer when it wasn't (the phone's sendMessageToWatch falls back
+    /// to transferUserInfo so the buzz is never lost). watchOS delivers these to a background wake.
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        handleTimerDone(userInfo)
+    }
+
+    /// Shared handling for the "timerDone" payload from either transport.
+    private func handleTimerDone(_ payload: [String: Any]) {
+        guard let label = payload["timerDone"] as? String else { return }
+        DispatchQueue.main.async {
+            self.timerAlert = label
+        }
+    }
+
+    /// Find iPhone (triple-tap on the actions page): ask the phone to play its siren at max volume.
+    /// Requires the phone reachable (the phone app runs with bluetooth-central, so it nearly always is).
+    func pingPhone() {
+        guard WCSession.isSupported() else { return }
+        WCSession.default.sendMessage(["findPhone": true], replyHandler: { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.findPhoneSent = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    self?.findPhoneSent = false
+                }
+            }
+        }, errorHandler: { _ in })
     }
 
     // Required by the protocol on watchOS even though they are phone-side concerns. No-ops here.

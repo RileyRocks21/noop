@@ -20,7 +20,9 @@ struct StrandiOSApp: App {
     @StateObject private var health: HealthKitBridge
     /// The phone→watch link. Built + activated here so the watch app actually receives snapshots on a
     /// real device; without an owner that pushes it, the watch only ever shows placeholder data.
-    @StateObject private var watch = WatchSessionBridge()
+    /// Uses the shared singleton so background feature code (custom timers firing, the Find-iPhone
+    /// message handler) reaches the SAME WCSession instead of activating a second one.
+    @StateObject private var watch = WatchSessionBridge.shared
     /// Shared cross-screen navigation hook (e.g. Live → Devices). The iOS shell (`RootTabView`)
     /// observes it and presents the Devices manager.
     @StateObject private var router: NavRouter
@@ -80,6 +82,9 @@ struct StrandiOSApp: App {
         // is open, so a user testing the wind-down reminder with NOOP foregrounded sees nothing. Register
         // before the first scene so any early-fired notification is presented.
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
+        // Spin up the custom-timers store at launch so a timer set in a PREVIOUS launch still buzzes
+        // the watch when it fires, even if the wearer never opens the Timers screen this session.
+        _ = CustomTimersStore.shared
         // K5: tapping a scheduled morning-brief notification routes to Coach via the shared NavRouter.
         let router = NavRouter()
         _router = StateObject(wrappedValue: router)
