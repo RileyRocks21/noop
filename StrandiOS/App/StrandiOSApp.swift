@@ -82,16 +82,17 @@ struct StrandiOSApp: App {
         // is open, so a user testing the wind-down reminder with NOOP foregrounded sees nothing. Register
         // before the first scene so any early-fired notification is presented.
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
-        // Spin up the custom-timers store at launch so a timer set in a PREVIOUS launch still buzzes
-        // the strap when it fires, even if the wearer never opens the Timers screen this session.
-        // 4 loops = the "angry" long buzz, so a finished timer is unmissable.
-        CustomTimersStore.shared.buzz = { [weak model] in model?.buzz(loops: 4) }
         // K5: tapping a scheduled morning-brief notification routes to Coach via the shared NavRouter.
         let router = NavRouter()
         _router = StateObject(wrappedValue: router)
         NotificationPresenter.shared.onCoachBriefTapped = { [weak router] in router?.openCoach() }
         let model = AppModel()
         _model = StateObject(wrappedValue: model)
+        // Spin up the custom-timers store at launch so a timer set in a PREVIOUS launch still buzzes
+        // the strap when it fires, even if the wearer never opens the Timers screen this session.
+        // 4 loops = the "angry" long buzz, so a finished timer is unmissable. Must come AFTER the
+        // AppModel init above — the closure captures it.
+        CustomTimersStore.shared.buzz = { [weak model] in model?.buzz(loops: 4) }
         CoachBriefScheduler.register(generateBrief: { [weak coach = model.coach] in
             await coach?.generateBrief()
         }, log: { [weak model] line in
