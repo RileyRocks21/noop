@@ -273,6 +273,9 @@ targets:
           # iOS refuses to activate a .playback session in the background and the siren silently does
           # nothing. Sideloaded build, so App Store review scrutiny of this mode doesn't apply.
           - audio
+          # noop-agent: PushKit VoIP pushes (critical alerts ring like a phone call) and the LiveKit
+          # voice call staying up on the lock screen both need the voip mode.
+          - voip
           # #524: keep recording an outdoor workout's GPS route while the app is backgrounded (screen off),
           # matching Android's foreground-service capture. Required by GpsWorkoutRecorder's
           # allowsBackgroundLocationUpdates; without this mode iOS crashes when background updates start.
@@ -318,12 +321,14 @@ targets:
         # Nutrition tab: photographing a meal for an AI macro estimate and scanning barcodes.
         # Photos go ONLY to the AI provider the user configured (BYOK) when they tap Estimate.
         NSCameraUsageDescription: "NOOP uses the camera to photograph meals for a macro estimate and to scan barcodes. Photos are only sent to the AI provider you chose, and only when you ask for an estimate."
-        # #187: the opt-in AI Coach's "Custom (OpenAI-compatible)" provider can point at a LOCAL LLM on
-        # the LAN (Ollama / LM Studio at http://192.168.x.x:11434). ATS blocks cleartext by default;
-        # NSAllowsLocalNetworking exempts loopback/.local/private-LAN hosts ONLY — public HTTPS endpoints
-        # are unaffected, so cloud providers stay TLS. Mirrors the macOS target.
+        # noop-agent backend: reached over Tailscale (or a LAN) as plain http://. Tailscale encrypts
+        # the link itself, so ATS allows insecure loads for ts.net hosts and local/LAN networking.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
         # #155: expose the app's Documents folder to Files/Shortcuts so the user's Siri Shortcut can
         # read the opt-in noop_sync.txt drop file (Apple-Health-free export for sideloaded installs).
         # Both keys are required for the folder to actually appear in Files.
@@ -352,6 +357,12 @@ targets:
         com.apple.developer.healthkit.access: []
         com.apple.security.application-groups:
           - $(APP_GROUP_ID)
+        # noop-agent push notifications (normal + high priority). Requires the paid Apple Developer
+        # Program at signing time; on a free-account sideload the push token simply never arrives and
+        # the app falls back to WebSocket-driven in-app banners.
+        aps-environment: development
+        # High-priority agent alerts interrupt Focus/notification summary.
+        com.apple.developer.usernotifications.time-sensitive: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop
