@@ -156,11 +156,13 @@ enum NutritionMath {
         }
     }
 
-    /// Total burn for a day = BMR (profile) + above-resting active energy (strap estimate /
-    /// Apple Health import), when the active half exists. BMR alone is still returned when no
-    /// active figure is banked — labelled as such at the call site.
-    static func burnedKcal(activeKcal: Double?, bmr: Double) -> Double {
-        (activeKcal ?? 0) + bmr
+    /// Total burn for a day. The strap's whole-day estimate (`activeKcalEst`) is a TOTAL: Keytel
+    /// active energy + Harris–Benedict resting are integrated TOGETHER over the day's samples, so
+    /// resting metabolism is already inside it — adding BMR again double-counts ~1,500–2,000 kcal.
+    /// Floored at the profile BMR so a partial-wear day never reports less than resting metabolism.
+    static func burnedKcal(strapTotalKcal: Double?, bmr: Double) -> Double {
+        guard let total = strapTotalKcal else { return bmr }
+        return max(total, bmr)
     }
 
     // MARK: generate_weekly_summary

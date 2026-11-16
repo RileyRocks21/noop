@@ -35,19 +35,23 @@ struct NutritionView: View {
         return NutritionMath.dayKey(d)
     }
 
-    /// Total burn estimate for a day: profile BMR + active energy, when banked.
+    /// Total burn estimate for a day. `activeKcalEst` is the strap's whole-day TOTAL (resting
+    /// metabolism already integrated — see NutritionMath.burnedKcal), so BMR is only the fallback
+    /// when no strap data exists, never an addend.
     private func burned(for dayKey: String) -> (total: Double, hasActive: Bool) {
         let bmr = NutritionMath.bmr(sex: profile.sex, weightKg: profile.weightKg,
                                     heightCm: profile.heightCm, ageYears: profile.age)
-        let active = repo.days.first(where: { $0.day == dayKey })?.activeKcalEst
-        return (NutritionMath.burnedKcal(activeKcal: active, bmr: bmr), active != nil)
+        let strapTotal = repo.days.first(where: { $0.day == dayKey })?.activeKcalEst
+        return (NutritionMath.burnedKcal(strapTotalKcal: strapTotal, bmr: bmr), strapTotal != nil)
     }
 
     /// Best-effort burn estimate for the selected day. Days end at midnight (local).
-    /// - Past days: `soFar` == `projected` == full-day BMR + banked active energy.
-    /// - Today: BMR accrues by the clock (`bmr × elapsed fraction`), active energy is what the
-    ///   strap/Health has banked SO FAR, and `projected` extrapolates that active pace linearly to
-    ///   midnight (`bmr + activeSoFar / elapsedFraction`). Honest, simple, and clearly labelled "~".
+    /// - Past days: `soFar` == `projected` == the strap's whole-day total (BMR floor).
+    /// - Today: `soFar` is the strap's running total (which already includes resting burn while
+    ///   worn), floored at BMR × time elapsed to cover unworn gaps. `projected` = soFar + the
+    ///   REST of the day at resting rate. The active burn rate is deliberately NOT extrapolated:
+    ///   a 7am gym session stretched linearly to midnight projected ~4,000 kcal from a normal
+    ///   workout, which is exactly the bug this avoids.
     private struct BurnEstimate {
         var soFar: Double
         var projected: Double
@@ -58,20 +62,19 @@ struct NutritionView: View {
     private func burnEstimate(for dayKey: String) -> BurnEstimate {
         let bmr = NutritionMath.bmr(sex: profile.sex, weightKg: profile.weightKg,
                                     heightCm: profile.heightCm, ageYears: profile.age)
-        let active = repo.days.first(where: { $0.day == dayKey })?.activeKcalEst
+        let strapTotal = repo.days.first(where: { $0.day == dayKey })?.activeKcalEst
         let todayKey = NutritionMath.dayKey(Date())
         guard dayKey == todayKey else {
-            let total = NutritionMath.burnedKcal(activeKcal: active, bmr: bmr)
-            return BurnEstimate(soFar: total, projected: total, hasActive: active != nil, isToday: false)
+            let total = NutritionMath.burnedKcal(strapTotalKcal: strapTotal, bmr: bmr)
+            return BurnEstimate(soFar: total, projected: total, hasActive: strapTotal != nil, isToday: false)
         }
-        // Fraction of the local day elapsed. Floored at 4% (~1 h) so a 00:30 viewing doesn't
-        // extrapolate 20 active kcal into a fantasy 500; capped at 1 for completeness.
+        // Fraction of the local day elapsed. Floored at 4% (~1 h) so early-morning numbers stay sane.
         let start = Calendar.current.startOfDay(for: Date())
         let elapsed = min(1, max(0.04, Date().timeIntervalSince(start) / 86400))
-        let activeSoFar = active ?? 0
-        return BurnEstimate(soFar: bmr * elapsed + activeSoFar,
-                            projected: bmr + activeSoFar / elapsed,
-                            hasActive: active != nil,
+        let soFar = max(strapTotal ?? 0, bmr * elapsed)
+        return BurnEstimate(soFar: soFar,
+                            projected: soFar + bmr * (1 - elapsed),
+                            hasActive: strapTotal != nil,
                             isToday: true)
     }
 
@@ -223,11 +226,11 @@ struct NutritionView: View {
 
                 if est.isToday {
                     Text(est.hasActive
-                         ? "Burned-so-far = BMR × time elapsed + active energy banked; the ~projection stretches your current active pace to midnight."
-                         : "Burn = BMR × time elapsed only — no strap/Apple Health active energy banked yet today.")
+                         ? "Burned-so-far is the strap's running total (resting included); the ~projection adds the rest of today at resting rate — workout pace is not extrapolated."
+                         : "Burn = resting metabolism × time elapsed so far — no strap/Apple Health data banked yet today.")
                         .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                 } else if !est.hasActive {
-                    Text("Burn = BMR only — no strap/Apple Health active energy banked for this day yet.")
+                    Text("Burn = resting metabolism only — no strap/Apple Health data banked for this day yet.")
                         .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                 }
             }
