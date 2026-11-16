@@ -6,16 +6,20 @@ import Foundation
 // State for the Chat tab: history paging (GET /conversations/default/messages?before=), sending
 // (POST → { messageId }), and the streamed reply arriving over the WebSocket as message.delta
 // (append text) → message.done (swap in the final Message). Tool activity rides tool.started /
-// tool.finished and renders as small chips under the assistant bubble. The socket also drives the
-// "offline" banner; a reconnect refetches the tail of the conversation (the contract's rule).
+// tool.finished and renders as small chips under the assistant bubble.
+//
+// A SINGLETON: Today cards ("open chat about it") need to hand the chat a prompt, which only works
+// if the Chat tab and the card share one store. Socket events come from AgentSocketHub — one
+// connection for the whole app.
 
 @MainActor
 final class ChatStore: ObservableObject {
+    static let shared = ChatStore()
+
     @Published private(set) var messages: [AgentChatMessage] = []
     @Published private(set) var isLoadingHistory = false
     @Published private(set) var nextBefore: String?
     @Published private(set) var isSending = false
-    @Published private(set) var isOnline = false
     @Published var errorMessage: String?
 
     /// The in-flight assistant reply: its server messageId and the text accumulated so far.
@@ -24,27 +28,27 @@ final class ChatStore: ObservableObject {
     /// Tool chips keyed by the messageId they belong to.
     @Published private(set) var toolChips: [String: [AgentChatMessage.ToolRef]] = [:]
 
-    let socket = AgentSocket()
-    private var didWireSocket = false
+    /// A prompt handed over by another screen ("open chat about it"). ChatView consumes it into
+    /// the draft field rather than auto-sending, so the user can review first.
+    @Published var pendingPrompt: String?
+
+    private var subscription: UUID?
+    private var started = false
+
+    private init() {}
 
     func start() {
-        guard !didWireSocket else { return }
-        didWireSocket = true
-        socket.onEvent = { [weak self] event in
-            Task { @MainActor in self?.handle(event) }
-        }
-        socket.onStateChange = { [weak self] online in
-            Task { @MainActor in self?.isOnline = online }
-        }
-        socket.onReconnected = { [weak self] in
-            Task { @MainActor in await self?.loadInitial() }
-        }
-        socket.connect()
+        guard !started else { return }
+        started = true
+        AgentSocketHub.shared.start()
+        subscription = AgentSocketHub.shared.subscribe(
+            handler: { [weak self] event in
+                Task { @MainActor in self?.handle(event) }
+            },
+            onRefetch: { [weak self] in
+                Task { @MainActor in await self?.loadInitial() }
+            })
         Task { await loadInitial() }
-    }
-
-    func stop() {
-        socket.disconnect()
     }
 
     // MARK: History

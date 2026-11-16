@@ -11,13 +11,19 @@ import StrandDesign
 
 struct ChatView: View {
     @ObservedObject private var config = AgentConfig.shared
-    @StateObject private var store = ChatStore()
+    @ObservedObject private var hub = AgentSocketHub.shared
+    @ObservedObject private var store = ChatStore.shared
     @State private var draft = ""
 
     var body: some View {
         if config.isPaired {
             chatContent
                 .onAppear { store.start() }
+                .onChange(of: store.pendingPrompt) { _, prompt in
+                    // "Open chat about it" from a Today card: drop the prompt into the draft for
+                    // review, don't auto-send.
+                    if let prompt { draft = prompt; store.pendingPrompt = nil }
+                }
         } else {
             PairingView()
         }
@@ -25,7 +31,7 @@ struct ChatView: View {
 
     private var chatContent: some View {
         VStack(spacing: 0) {
-            if !store.isOnline {
+            if !hub.isOnline {
                 Text("Offline — reconnecting to your server…")
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textSecondary)
