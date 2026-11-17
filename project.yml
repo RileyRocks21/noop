@@ -75,6 +75,12 @@ packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     exactVersion: 0.9.20
+  # noop-agent live voice calls with Jarvis (WebRTC). iOS app only. Pinned EXACT, and to 2.14.0 on purpose:
+  # package resolution covers the whole project, and 2.15+ declares swift-tools-version 6.1+, which the
+  # macos-15 CI legs' Xcode cannot resolve. Bump once every CI leg runs Xcode 26.
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    exactVersion: 2.14.0
 targets:
   Strand:
     type: application
@@ -317,7 +323,8 @@ targets:
         # server transcription. Only the resulting TEXT reaches the provider, via the same channel
         # a typed question already uses.
         NSSpeechRecognitionUsageDescription: "NOOP transcribes your question on-device so you can ask the coach out loud instead of typing. Audio never leaves your iPhone."
-        NSMicrophoneUsageDescription: "NOOP uses the microphone to let you ask the coach a question by voice. The audio is transcribed on-device and never leaves your iPhone."
+        # Two different uses, stated separately so the prompt stays true for both.
+        NSMicrophoneUsageDescription: "NOOP uses the microphone to let you ask the coach a question by voice (transcribed on-device, never leaves your iPhone) and for calls with Jarvis, which stream your voice to your own noop-agent server."
         # Nutrition tab: photographing a meal for an AI macro estimate and scanning barcodes.
         # Photos go ONLY to the AI provider the user configured (BYOK) when they tap Estimate.
         NSCameraUsageDescription: "NOOP uses the camera to photograph meals for a macro estimate and to scan barcodes. Photos are only sent to the AI provider you chose, and only when you ask for an estimate."
@@ -387,6 +394,7 @@ targets:
       - package: MarkdownUI
       - package: ZIPFoundation
       - package: PolarProtocol
+      - package: LiveKit
       - target: NOOPiOSWidgets
       # Embed the watchOS app so the iPhone app carries it (NOOP.app/Watch/NOOPWatch.app). A watch app
       # installs by riding inside its iOS companion; without this it would never reach a paired watch.

@@ -80,6 +80,8 @@ struct RootTabView: View {
 
     /// Pending agent approvals drive the badge on the Jarvis tab.
     @ObservedObject private var approvals = ApprovalsStore.shared
+    /// A live call with Jarvis covers the whole app, whichever tab started it.
+    @ObservedObject private var call = VoiceCallStore.shared
 
     /// Native tab selection binding. SwiftUI sends taps on the already-selected item through the
     /// setter, which lets the system tab bar retain the app's refresh / pop-to-root / scroll-to-top
@@ -193,6 +195,7 @@ struct RootTabView: View {
         // Agent cross-screen requests (Today's Jarvis card, "open chat about it"): the section is already
         // set on JarvisRouter, so switching to the Jarvis tab lands on it. Pop Jarvis to its root so the
         // section switcher is what's showing.
+        .fullScreenCover(isPresented: $call.isPresented) { CallView() }
         .onReceive(NotificationCenter.default.publisher(for: AgentNav.openJarvisNotification)) { _ in
             withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) {
                 tabPaths[6] = NavigationPath()

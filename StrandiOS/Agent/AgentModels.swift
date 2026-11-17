@@ -210,3 +210,13 @@ enum AgentCoders {
     }()
 }
 #endif
+
+#if os(iOS)
+/// `POST /voice/session` → a LiveKit room the server's voice agent is already dispatched into.
+struct AgentVoiceSession: Decodable {
+    var url: String
+    var room: String
+    var token: String
+    var expiresAt: String?
+}
+#endif

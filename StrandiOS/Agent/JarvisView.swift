@@ -65,14 +65,28 @@ struct JarvisView: View {
     }
 
     private var switcher: some View {
-        Picker(selection: $router.section) {
-            ForEach(JarvisSection.allCases) { section in
-                Text(section.title).tag(section)
+        HStack(spacing: 10) {
+            Picker(selection: $router.section) {
+                ForEach(JarvisSection.allCases) { section in
+                    Text(section.title).tag(section)
+                }
+            } label: {
+                Text("Jarvis")
             }
-        } label: {
-            Text("Jarvis")
+            .pickerStyle(.segmented)
+            // Talk to Jarvis live (VoiceCallStore); the call screen covers the app from RootTabView.
+            Button {
+                VoiceCallStore.shared.start()
+            } label: {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(StrandPalette.surfaceBase)
+                    .frame(width: 34, height: 30)
+                    .background(Capsule().fill(StrandPalette.accent))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Call Jarvis"))
         }
-        .pickerStyle(.segmented)
         .padding(.horizontal, NoopMetrics.screenHPadding)
         .padding(.vertical, 8)
         .background(StrandPalette.surfaceBase.opacity(0.94).ignoresSafeArea(edges: .top))
