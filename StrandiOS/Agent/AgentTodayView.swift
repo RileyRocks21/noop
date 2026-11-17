@@ -246,7 +246,7 @@ struct AgentTodayView: View {
 
     /// A NoopCard that opens Chat about `topic` when tapped (tap-any-card per the handoff).
     private func cardButton<Content: View>(topic: String,
-                                           @ViewBuilder content: () -> Content) -> some View {
+                                           @ViewBuilder content: @escaping () -> Content) -> some View {
         Button {
             AgentNav.openChat(about: topic)
         } label: {
