@@ -1,0 +1,74 @@
+# Fork-only: unsigned iOS sideload IPA built on Codemagic (free personal plan: 500 macOS M2 minutes/month).
+#
+# Same build as .github/workflows/nutrition-ipa.yml, moved here because GitHub's hosted macOS runners kept
+# failing to pick jobs up ("not acquired by Runner"). Keep the two in step if the build changes.
+#
+# Start a build: Codemagic → the noop app → "Start new build" → workflow "NOOP iOS sideload IPA" → main.
+# Builds are manual only (no push trigger) so the free minutes aren't spent on every commit.
+# Download the .ipa from the build's Artifacts and sideload it with Sideloadly / AltStore, as before.
+#
+# Secret: create an environment variable group named `noop_secrets` in the Codemagic app settings with
+# GOOGLE_SERVICE_ACCOUNT_JSON (marked Secret) = the service-account JSON. If it's multi-line and the UI
+# mangles it, store it base64-encoded as GOOGLE_SERVICE_ACCOUNT_JSON_B64 instead. Without either, the
+# build still succeeds and the Nutrition tab shows its setup card.
+workflows:
+  ios-sideload:
+    name: NOOP iOS sideload IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      groups:
+        - noop_secrets
+      # Pinned to the Xcode GitHub's macos-26 image builds this app with (iOS 26 SDK for Liquid Glass).
+      # `latest` on Codemagic is Xcode 27 now; move deliberately, not by alias drift.
+      xcode: 26.6
+    scripts:
+      - name: Inject Google service-account credential (from secret, never committed)
+        script: |
+          set -euo pipefail
+          OUT=StrandiOS/Resources/GoogleServiceAccount.json
+          if [ -n "${GOOGLE_SERVICE_ACCOUNT_JSON_B64:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON_B64" | base64 --decode > "$OUT"
+          elif [ -n "${GOOGLE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" > "$OUT"
+          fi
+          if [ -s "$OUT" ]; then
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$OUT" \
+              || { echo "GoogleServiceAccount.json is not valid JSON - check the secret"; exit 1; }
+            echo "Credential injected ($(wc -c < "$OUT" | tr -d ' ') bytes)."
+          else
+            rm -f "$OUT"
+            echo "WARNING: no Google service-account secret set - the Nutrition tab will show its setup card."
+          fi
+      - name: Install XcodeGen
+        script: brew install xcodegen
+      - name: Generate Xcode project
+        script: xcodegen generate
+      - name: Build NOOPiOS for device (unsigned, Release)
+        # Release, not Debug: a Debug build carries get-task-allow and fails "integrity could not be
+        # verified" after sideload re-signing (see fork-testing-build.yml #53).
+        script: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -scheme NOOPiOS -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+      - name: Package sideload .ipa (strip watch, preserve widget capabilities)
+        script: |
+          set -euo pipefail
+          APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
+          test -n "$APP" || { echo ".app (iphoneos) not found"; exit 1; }
+          # No Apple Watch in this setup: strip the embedded watch app so sideload re-signing stays simple.
+          rm -rf "$APP/Watch"
+          test -d "$APP/PlugIns/NOOPWidgets.appex" || { echo "NOOPWidgets.appex missing"; exit 1; }
+          test -f "$APP/GoogleServiceAccount.json" && echo "credential is in the bundle" \
+            || echo "WARNING: credential NOT in bundle - Nutrition tab will need the Documents drop-in"
+          Tools/prepare-ios-sideload-app.sh "$APP"
+          VER=$(grep -m1 'MARKETING_VERSION' project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          mkdir -p dist
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qr "dist/NOOP-nutrition-ios-unsigned-v${VER}.ipa" Payload
+          ls -la dist
+    artifacts:
+      - dist/*.ipa
