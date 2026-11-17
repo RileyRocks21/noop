@@ -83,13 +83,20 @@ final class AgentTodayStore: ObservableObject {
 // MARK: - Cross-screen "open chat about it"
 
 enum AgentNav {
-    /// Posted when an agent screen wants the shell to switch to the Chat tab.
-    static let openChatNotification = Notification.Name("noop.agent.openChat")
+    /// Posted when an agent surface wants the shell to switch to the Jarvis tab. The section to show is
+    /// set on `JarvisRouter.shared` BEFORE posting, so the tab opens on it directly.
+    static let openJarvisNotification = Notification.Name("noop.agent.openJarvis")
 
-    /// Hand a prompt to the Chat tab and ask the shell to switch to it.
+    /// Switch to the Jarvis tab, showing `section`.
+    @MainActor static func openJarvis(_ section: JarvisSection) {
+        JarvisRouter.shared.section = section
+        NotificationCenter.default.post(name: openJarvisNotification, object: nil)
+    }
+
+    /// Hand a prompt to Jarvis's Chat (staged in the draft for review, not sent) and switch to it.
     @MainActor static func openChat(about topic: String) {
         ChatStore.shared.pendingPrompt = topic
-        NotificationCenter.default.post(name: openChatNotification, object: nil)
+        openJarvis(.chat)
     }
 }
 #endif

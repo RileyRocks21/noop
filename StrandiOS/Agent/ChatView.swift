@@ -18,7 +18,12 @@ struct ChatView: View {
     var body: some View {
         if config.isPaired {
             chatContent
-                .onAppear { store.start() }
+                .onAppear {
+                    store.start()
+                    // A prompt staged while Chat wasn't on screen (Today's Jarvis card opens Jarvis on
+                    // Chat, which creates this view fresh) never fires onChange — take it here.
+                    if let prompt = store.pendingPrompt { draft = prompt; store.pendingPrompt = nil }
+                }
                 .onChange(of: store.pendingPrompt) { _, prompt in
                     // "Open chat about it" from a Today card: drop the prompt into the draft for
                     // review, don't auto-send.
