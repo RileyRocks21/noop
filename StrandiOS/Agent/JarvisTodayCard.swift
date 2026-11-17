@@ -109,6 +109,16 @@ struct JarvisTodayCard: View {
                     .foregroundStyle(StrandPalette.accent)
             }
             .buttonStyle(.plain)
+            Button {
+                VoiceCallStore.shared.start()
+            } label: {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(StrandPalette.accent)
+                    .padding(.leading, 6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Call Jarvis"))
         }
     }
 
