@@ -52,9 +52,9 @@ struct RootTabView: View {
     /// (#198; the #197 resetID/`.id()` rebuild reset both). Requires the tab roots' first-hop
     /// links to push `TabRoute`/`MoreDestination` VALUES — closure-destination links bypass the path.
     ///
-    /// Sized for tags 0…8: 0 Today (agent home), 6 Chat, 7 Tasks, 8 Inbox, 4 More. Tags 1/2/3/5
-    /// belonged to the health screens (Trends/Sleep/Coach/Nutrition), which moved under More as
-    /// pushed destinations — their tags stay reserved so nothing else collides with stored state.
+    /// Sized for tags 0…8: 0 Today, 1 Trends, 2 Sleep, 6 Jarvis, 4 More. Tags 3/5 (Coach, Nutrition)
+    /// are pushed More destinations now and 7/8 (the agent's old Tasks/Inbox tabs) are inside Jarvis;
+    /// those tags stay reserved so nothing else collides with stored state.
     @State private var tabPaths: [NavigationPath] = Array(repeating: NavigationPath(), count: 9)
     /// One scroll-to-top token per tab. Bumped when the user re-taps the active tab while it's ALREADY
     /// at its root — the other half of the iOS convention #197/#198 left unserved (an at-root re-tap was
@@ -70,11 +70,15 @@ struct RootTabView: View {
     private var expandedMoreSections: Set<String> { MoreSectionPrefs.decode(expandedMoreSectionsCSV) }
 
     /// V8 liquid redesign is the default Today; the Settings toggle lets a user fall back to the classic
-    /// Today if they prefer it (keyed identically to the SettingsView toggle). Default ON. With the agent
-    /// home owning tab 0, the health dashboard survives as More → Health Today (see HealthTodayView below).
+    /// Today if they prefer it (keyed identically to the SettingsView toggle). Default ON.
     @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
 
-    /// Pending agent approvals drive the badge on the More tab.
+    /// The Today tab root, honouring the liquid/classic preference. Both carry the Jarvis card.
+    @ViewBuilder private var todayTabRoot: some View {
+        if liquidTodayEnabled { LiquidTodayView() } else { TodayView() }
+    }
+
+    /// Pending agent approvals drive the badge on the Jarvis tab.
     @ObservedObject private var approvals = ApprovalsStore.shared
 
     /// Native tab selection binding. SwiftUI sends taps on the already-selected item through the
@@ -108,15 +112,18 @@ struct RootTabView: View {
     /// rebuild the tab roots underneath it. The same class of rebuild is what #197 caused with an
     /// `.id()` reset and #198 had to undo — it lost scroll position and re-ran `.task`.
     ///
-    /// Only a decisive horizontal flick switches tabs. The tab tags are no longer contiguous (agent
-    /// screens took 6/7/8 while More stayed 4), so the swipe walks `tabOrder` rather than ±1.
-    private static let tabOrder: [Int] = [0, 6, 7, 8, 4]
+    /// Only a decisive horizontal flick switches tabs, and Today is carved out because it uses
+    /// horizontal swipe to change DAYS. The tags are not contiguous (Jarvis is 6, More stays 4), so the
+    /// swipe walks `tabOrder` rather than ±1.
+    private static let tabOrder: [Int] = [0, 1, 2, 6, 4]
 
     private var tabSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 24)
             .onEnded { v in
                 let dx = v.translation.width, dy = v.translation.height
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.6 else { return }
+                // Today (tab 0) uses horizontal swipe to change DAYS, so tab-swipe is off there.
+                guard selectedTab != 0 else { return }
                 guard let index = Self.tabOrder.firstIndex(of: selectedTab) else { return }
                 let nextIndex = min(Self.tabOrder.count - 1, max(0, index + (dx < 0 ? 1 : -1)))
                 let next = Self.tabOrder[nextIndex]
@@ -131,14 +138,16 @@ struct RootTabView: View {
         // its dynamic interaction with scrolling content automatically; older supported releases use
         // the corresponding system material and safe-area behaviour from the same TabView.
         TabView(selection: nativeTabSelection) {
-            // The agent front end owns the tab bar (noop-agent handoff): Today (agent home), Chat,
-            // Tasks, Inbox, More. Tags 1/2/3/5 (Trends/Sleep/Coach/Nutrition) are retired as tabs —
-            // those screens live under More now — but stay reserved so no new tab collides with a
-            // stored path/scroll token from an older install.
-            tab(AgentTodayView(), "Today", "sunrise", path: $tabPaths[0], scrollSignal: scrollTop[0]).tag(0)
-            tab(ChatView(), "Chat", "bubble.left.and.bubble.right", path: $tabPaths[6], scrollSignal: scrollTop[6]).tag(6)
-            tab(TasksView(), "Tasks", "checklist", path: $tabPaths[7], scrollSignal: scrollTop[7]).tag(7)
-            tab(InboxView(), "Inbox", "tray", path: $tabPaths[8], scrollSignal: scrollTop[8]).tag(8)
+            // The health app's own tabs, plus ONE agent tab. Today is the health dashboard again (with
+            // a Jarvis card pinned near the top); everything the noop-agent backend does — Chat, Tasks,
+            // Inbox, Approvals — lives in the Jarvis tab. Coach and Nutrition are More destinations, which
+            // keeps the bar at five so iOS never overflows a tab into its system "More".
+            tab(todayTabRoot, "Today", "square.grid.2x2", path: $tabPaths[0], scrollSignal: scrollTop[0]).tag(0)
+            tab(TrendsView(), "Trends", "chart.line.uptrend.xyaxis", path: $tabPaths[1], scrollSignal: scrollTop[1]).tag(1)
+            tab(SleepView(), "Sleep", "bed.double", path: $tabPaths[2], scrollSignal: scrollTop[2]).tag(2)
+            tab(JarvisView(), "Jarvis", "sparkles", path: $tabPaths[6], scrollSignal: scrollTop[6])
+                .badge(approvals.pendingCount)
+                .tag(6)
             moreTab(path: $tabPaths[4], scrollSignal: scrollTop[4]).tag(4)
         }
         .tint(StrandPalette.accent)
@@ -172,7 +181,7 @@ struct RootTabView: View {
                                  including: tabPaths[selectedTab].isEmpty ? .all : .subviews)
         .task {
             await repo.refresh()
-            // Start the agent approvals feed early so the More-tab badge is live before the first visit.
+            // Start the agent approvals feed early so the Jarvis-tab badge is live before the first visit.
             ApprovalsStore.shared.start()
             // Backup & Sync: on-launch catch-up (see RootView). Detached + utility priority so a
             // 100MB+ whole-DB ZIP never blocks startup; gated on the auto toggle (default OFF). (Must-fix #4.)
@@ -181,16 +190,13 @@ struct RootTabView: View {
                 await FolderBackup.catchUpIfDue(checkpoint: { await backupRepo.checkpointForBackup() })
             }
         }
-        // Agent cross-screen requests: "open chat about it" (Today cards) lands on the Chat tab with
-        // the prompt staged in ChatStore.pendingPrompt; "open nutrition" pushes the Nutrition screen
-        // onto the More stack.
-        .onReceive(NotificationCenter.default.publisher(for: AgentNav.openChatNotification)) { _ in
-            withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selectedTab = 6 }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AgentNav.openNutritionNotification)) { _ in
+        // Agent cross-screen requests (Today's Jarvis card, "open chat about it"): the section is already
+        // set on JarvisRouter, so switching to the Jarvis tab lands on it. Pop Jarvis to its root so the
+        // section switcher is what's showing.
+        .onReceive(NotificationCenter.default.publisher(for: AgentNav.openJarvisNotification)) { _ in
             withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) {
-                selectedTab = 4
-                tabPaths[4].append(MoreDestination.nutrition)
+                tabPaths[6] = NavigationPath()
+                selectedTab = 6
             }
         }
         // Quick-action sheet presents with the calm easing (~0.42s) per the README sheet spec —
@@ -234,11 +240,8 @@ struct RootTabView: View {
                 }
                 router.requestedDestination = nil
             case .trends:
-                // Trends moved under More with the agent tab restructure — push it there.
-                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) {
-                    selectedTab = 4
-                    tabPaths[4].append(MoreDestination.trends)
-                }
+                // Trends is a primary tab on iPhone (not a pillar sheet) — switch to it.
+                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) { selectedTab = 1 }
                 router.requestedDestination = nil
             case .activeWorkout:
                 // The Today active-workout indicator opens Live through the quick-action Live sheet; once
@@ -475,26 +478,22 @@ struct RootTabView: View {
                            onRefresh: { await repo.refresh() },
                            topBackground: liquidScaffoldSky()) {
                 moreSection("Agent") {
-                    // noop-agent handoff: Approvals + Activity live under More (Activity arrives in
-                    // Step 4). The badge on the tab itself carries the pending-approval count.
-                    MoreRow("Approvals", "checkmark.shield.fill", .approvals)
+                    // Chat, Tasks, Inbox and Approvals live in the Jarvis tab; More keeps the agent's
+                    // configuration (the Server row sits under App).
                     MoreRow("Agent Settings", "brain", .agentSettings)
                 }
                 moreSection("Insights") {
                     MoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
                     MoreRow("Intelligence", "brain.head.profile", .intelligence)
-                    // K3: Coach promoted to a top-level tab (was behind the More list); the agent
-                    // restructure moved it back as a pushed destination.
+                    // Coach is a pushed destination: the tab bar holds five (Today, Trends, Sleep,
+                    // Jarvis, More), so a sixth tab would overflow into iOS's system "More".
                     MoreRow("Coach", "sparkles", .coach)
-                    MoreRow("Trends", "chart.line.uptrend.xyaxis", .trends)
                     MoreRow("Insights", "lightbulb.fill", .insights)
                     MoreRow("Explore", "square.grid.2x2.fill", .explore)
                     MoreRow("Compare", "rectangle.split.2x1.fill", .compare)
                 }
                 moreSection("Body") {
-                    // The pre-agent health dashboard (liquid Today) — tab 0 is the agent home now.
-                    MoreRow("Health Today", "heart.circle.fill", .healthToday)
-                    MoreRow("Sleep", "bed.double", .sleep)
+                    // Nutrition gave its tab to Jarvis; Today's calorie numbers still come from the strap.
                     MoreRow("Nutrition", "fork.knife", .nutrition)
                     MoreRow("Live", "waveform.path.ecg", .live)
                     MoreRow("Workouts", "figure.run", .workouts)
@@ -563,8 +562,6 @@ struct RootTabView: View {
         // Scroll the More index to the top on an at-root re-tap (#198 follow-up); read by its ScreenScaffold.
         .environment(\.scrollToTopSignal, scrollSignal)
         .tabItem { Label("More", systemImage: "ellipsis") }
-        // Pending agent approvals badge; 0 hides it.
-        .badge(approvals.pendingCount)
     }
 
     /// One titled, COLLAPSIBLE group in the More index (S2): the app's overline (UPPERCASE) becomes a
@@ -631,8 +628,8 @@ private enum MoreDestination: Hashable {
     case live, workouts, liftLog, health, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
     case alarms, automations, testCentre, siriShortcuts, powerSaving, settings, timers, serverSettings
-    // Screens retired from the tab bar by the agent restructure, plus the agent's own screens.
-    case trends, sleep, nutrition, healthToday, approvals, agentSettings
+    // Nutrition (no longer a tab) and the agent's configuration screen.
+    case nutrition, agentSettings
 
     @ViewBuilder var destination: some View {
         switch self {
@@ -642,11 +639,7 @@ private enum MoreDestination: Hashable {
         case .insights:        InsightsView()
         case .explore:         MetricExplorerView()
         case .compare:         CompareView()
-        case .trends:          TrendsView()
-        case .sleep:           SleepView()
         case .nutrition:       NutritionView()
-        case .healthToday:     HealthTodayView()
-        case .approvals:       ApprovalsView()
         case .agentSettings:   AgentSettingsView()
         case .live:            LiveView()
         case .workouts:        WorkoutsView()
@@ -673,16 +666,6 @@ private enum MoreDestination: Hashable {
         case .powerSaving:     PowerSavingView()
         case .settings:        SettingsView()
         }
-    }
-}
-
-
-/// The pre-agent health dashboard as a More destination, honouring the liquid/classic preference
-/// the old tab 0 used to read. Kept as its own view so `MoreDestination` (not a View) can name it.
-private struct HealthTodayView: View {
-    @AppStorage("noop.liquidTodayEnabled") private var liquidTodayEnabled = true
-    var body: some View {
-        if liquidTodayEnabled { LiquidTodayView() } else { TodayView() }
     }
 }
 

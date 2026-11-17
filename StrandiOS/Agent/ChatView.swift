@@ -14,11 +14,19 @@ struct ChatView: View {
     @ObservedObject private var hub = AgentSocketHub.shared
     @ObservedObject private var store = ChatStore.shared
     @State private var draft = ""
+    /// The message field is multi-line (Return inserts a newline), so the keyboard needs explicit ways to
+    /// go away: swipe down or tap the conversation, or Done above the keyboard.
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
         if config.isPaired {
             chatContent
-                .onAppear { store.start() }
+                .onAppear {
+                    store.start()
+                    // A prompt staged while Chat wasn't on screen (Today's Jarvis card opens Jarvis on
+                    // Chat, which creates this view fresh) never fires onChange — take it here.
+                    if let prompt = store.pendingPrompt { draft = prompt; store.pendingPrompt = nil }
+                }
                 .onChange(of: store.pendingPrompt) { _, prompt in
                     // "Open chat about it" from a Today card: drop the prompt into the draft for
                     // review, don't auto-send.
@@ -66,6 +74,11 @@ struct ChatView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 }
+                // Drag the conversation down to pull the keyboard away with it (Messages-style).
+                .scrollDismissesKeyboard(.interactively)
+                // A tap on the conversation dismisses too. Simultaneous, so "Load earlier messages" and
+                // text selection in bubbles keep working.
+                .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
                 .onChange(of: store.messages.count) { _, _ in
                     if let last = store.messages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -88,6 +101,7 @@ struct ChatView: View {
             // Input bar
             HStack(spacing: 10) {
                 TextField("Message your agent…", text: $draft, axis: .vertical)
+                    .focused($inputFocused)
                     .textFieldStyle(.plain)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
@@ -113,6 +127,14 @@ struct ChatView: View {
         .background(StrandPalette.surfaceBase.ignoresSafeArea())
         .navigationTitle("Chat")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { inputFocused = false }
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.accent)
+            }
+        }
     }
 
     // MARK: - Bubbles

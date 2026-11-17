@@ -1475,6 +1475,9 @@ struct TodayView: View {
                 todayTopBar
                 if selectedDayOffset == 0, let currentDay = repo.today?.day,
                    currentDay == repo.days.last?.day { HealthAlertBanner() }
+                // The noop-agent's Jarvis card, today-only. Same placement as the liquid Today: pinned,
+                // not a reorderable section (see LiquidTodayView for why).
+                if selectedDayOffset == 0 { JarvisTodayCard() }
                 #else
                 if selectedDayOffset == 0, let currentDay = repo.today?.day,
                    currentDay == repo.days.last?.day { HealthAlertBanner() }
