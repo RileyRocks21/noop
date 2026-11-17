@@ -77,13 +77,15 @@ final class AgentConfig: ObservableObject {
     private static let service = "com.noop.agent"
     private static let account = "device-token"
 
-    private static var baseQuery: [String: Any] {
+    private nonisolated static var baseQuery: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
          kSecAttrAccount as String: account]
     }
 
-    private static func saveToken(_ token: String) {
+    // nonisolated: Keychain is thread-safe, and `token` (nonisolated, called off-actor by the
+    // socket/API layer) reads through these.
+    private nonisolated static func saveToken(_ token: String) {
         guard let data = token.data(using: .utf8) else { return }
         SecItemDelete(baseQuery as CFDictionary)
         var attrs = baseQuery
@@ -92,7 +94,7 @@ final class AgentConfig: ObservableObject {
         SecItemAdd(attrs as CFDictionary, nil)
     }
 
-    private static func readToken() -> String? {
+    private nonisolated static func readToken() -> String? {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -103,7 +105,7 @@ final class AgentConfig: ObservableObject {
         return token
     }
 
-    private static func clearToken() {
+    private nonisolated static func clearToken() {
         SecItemDelete(baseQuery as CFDictionary)
     }
 }

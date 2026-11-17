@@ -87,7 +87,7 @@ enum AgentNav {
     static let openChatNotification = Notification.Name("noop.agent.openChat")
 
     /// Hand a prompt to the Chat tab and ask the shell to switch to it.
-    static func openChat(about topic: String) {
+    @MainActor static func openChat(about topic: String) {
         ChatStore.shared.pendingPrompt = topic
         NotificationCenter.default.post(name: openChatNotification, object: nil)
     }

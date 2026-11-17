@@ -109,7 +109,7 @@ final class TasksStore: ObservableObject {
             var stringValue: String
             var intValue: Int? { nil }
             init(_ s: String) { stringValue = s }
-            init?(stringValue: String) { stringValue = stringValue }
+            init?(stringValue: String) { self.stringValue = stringValue }
             init?(intValue: Int) { nil }
         }
         Task {
