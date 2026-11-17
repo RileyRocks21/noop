@@ -14,6 +14,9 @@ struct PairingView: View {
     @State private var code = ""
     @State private var isPairing = false
     @State private var errorMessage: String?
+    @State private var isTesting = false
+    @State private var testResult: String?
+    @State private var testOK = false
 
     var body: some View {
         ScreenScaffold(title: "Pair with your server",
@@ -36,6 +39,28 @@ struct PairingView: View {
                             .padding(.horizontal, 12).padding(.vertical, 10)
                             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(StrandPalette.surfaceInset))
+
+                        // Test the URL BEFORE pairing: /health needs no auth and no code, so a
+                        // reachability problem is diagnosable without burning a 10-minute code.
+                        Button {
+                            test()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isTesting { ProgressView().controlSize(.small) }
+                                Text(isTesting ? "Testing…" : "Test connection")
+                                    .font(StrandFont.subhead)
+                            }
+                            .foregroundStyle(StrandPalette.accent)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isTesting || config.serverURL.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                        if let testResult {
+                            Text(testResult)
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(testOK ? StrandPalette.recovery100 : StrandPalette.metricRose)
+                                .textSelection(.enabled)
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -83,6 +108,29 @@ struct PairingView: View {
         !config.serverURL.trimmingCharacters(in: .whitespaces).isEmpty
             && code.trimmingCharacters(in: .whitespaces).count == 6
             && !isPairing
+    }
+
+    private func test() {
+        isTesting = true
+        testResult = nil
+        Task {
+            defer { isTesting = false }
+            do {
+                // /health is unauthenticated per the contract.
+                let health: AgentHealthResponse = try await AgentAPI.shared.get("/health")
+                if health.ok == true {
+                    config.backendVersion = health.version
+                    testOK = true
+                    testResult = "Connected — backend \(health.version ?? "version unknown")"
+                } else {
+                    testOK = false
+                    testResult = "Server answered but reports not OK."
+                }
+            } catch {
+                testOK = false
+                testResult = NutritionStore.describe(error)
+            }
+        }
     }
 
     private func pair() {
