@@ -88,7 +88,10 @@ final class AgentAPI {
 
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-        if status == 401 {
+        // A 401 normally means the device token is dead — but on /auth/pair it means "bad or
+        // expired code", which must reach the user verbatim, not be masked as "not paired"
+        // (and must not clear a token that pairing doesn't even use).
+        if status == 401 && path != "/auth/pair" {
             await MainActor.run { config.handleUnauthorized() }
             throw AgentAPIError.notPaired
         }
