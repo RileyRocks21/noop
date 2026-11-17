@@ -55,7 +55,12 @@ final class AgentSocket: NSObject, URLSessionWebSocketDelegate {
         guard shouldRun else { return }
         Task { @MainActor in
             guard let base = AgentConfig.shared.baseURL, let token = AgentConfig.shared.token else {
-                // Not paired / no URL: nothing to connect to. Stay quiet; pairing re-triggers connect.
+                // Not paired / no URL yet. The hub's `started` guard means nobody calls connect()
+                // a second time after pairing, so bailing here left the socket dead until the app
+                // was relaunched ("Offline" banner forever). Poll gently until config appears.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    self?.open()
+                }
                 return
             }
             var components = URLComponents(url: base.appendingPathComponent("/ws"),
