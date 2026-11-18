@@ -22,6 +22,7 @@ struct JarvisTodayCard: View {
     @ObservedObject private var today = AgentTodayStore.shared
     @ObservedObject private var tasks = TasksStore.shared
     @ObservedObject private var approvals = ApprovalsStore.shared
+    @ObservedObject private var alerts = NotificationsStore.shared
 
     var body: some View {
         if config.isPaired {
@@ -30,6 +31,7 @@ struct JarvisTodayCard: View {
                     today.start()
                     tasks.start()
                     approvals.start()
+                    alerts.start()
                 }
         } else {
             connectRow
@@ -75,6 +77,7 @@ struct JarvisTodayCard: View {
                 if !upNext.isEmpty { upNextBlock }
                 if let window = today.today?.weather?.bestRunWindow { runWindowRow(window) }
                 if approvals.pendingCount > 0 { approvalsRow }
+                if alerts.unread > 0 { alertsRow }
                 if isEmpty {
                     Text("Nothing on deck. Ask Jarvis anything.")
                         .font(StrandFont.footnote)
@@ -232,6 +235,26 @@ struct JarvisTodayCard: View {
             Label("Best run window: \(window)", systemImage: "figure.run")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.accent)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Unread alerts, so a missed notification is visible from Today while push isn't reaching the phone.
+    private var alertsRow: some View {
+        Button {
+            AgentNav.openJarvis(.alerts)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bell.badge.fill")
+                    .foregroundStyle(StrandPalette.accent)
+                Text("Unread alerts: \(alerts.unread)")
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
         }
         .buttonStyle(.plain)
     }
