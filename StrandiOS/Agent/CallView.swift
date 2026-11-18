@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import AVFoundation
 import StrandDesign
 
 // MARK: - Call screen
@@ -21,8 +22,10 @@ struct CallView: View {
             Spacer(minLength: 24)
             captionList
                 .frame(maxHeight: 260)
+            talkArea
+                .padding(.top, 16)
             controls
-                .padding(.top, 20)
+                .padding(.top, 16)
                 .padding(.bottom, 36)
         }
         .padding(.horizontal, NoopMetrics.screenHPadding)
@@ -110,6 +113,77 @@ struct CallView: View {
                 .font(StrandFont.body)
                 .foregroundStyle(caption.isFinal || !caption.fromOwner ? StrandPalette.textPrimary : StrandPalette.textSecondary)
         }
+    }
+
+    // MARK: Tap-to-talk + mic mode
+
+    private var isLive: Bool { call.phase == .connected || call.phase == .reconnecting }
+
+    /// The hold-to-talk button (tap-to-talk on), and the switches for tap-to-talk and iOS Mic Mode
+    /// (Voice Isolation filters other voices on the phone itself).
+    private var talkArea: some View {
+        VStack(spacing: 12) {
+            if call.isPushToTalk {
+                Group {
+                    if call.isHoldingTalk { Text("Listening… release to send") } else { Text("Hold to talk") }
+                }
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(call.isHoldingTalk ? StrandPalette.accent : StrandPalette.textSecondary)
+                Circle()
+                    .fill(call.isHoldingTalk ? StrandPalette.accent : StrandPalette.surfaceInset)
+                    .frame(width: 96, height: 96)
+                    .overlay(
+                        Image(systemName: "waveform")
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(call.isHoldingTalk ? StrandPalette.surfaceBase : StrandPalette.textPrimary)
+                    )
+                    .scaleEffect(call.isHoldingTalk ? 1.08 : 1)
+                    .animation(.easeOut(duration: 0.12), value: call.isHoldingTalk)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { v in
+                                // Dragging well off the button cancels instead of sending.
+                                if hypot(v.translation.width, v.translation.height) > 120 {
+                                    call.talkReleased(cancelled: true)
+                                } else {
+                                    call.talkPressed()
+                                }
+                            }
+                            .onEnded { v in
+                                call.talkReleased(cancelled: hypot(v.translation.width, v.translation.height) > 120)
+                            }
+                    )
+                    .accessibilityLabel(Text("Hold to talk"))
+                    .accessibilityAddTraits(.isButton)
+            }
+            HStack(spacing: 20) {
+                Button {
+                    call.setPushToTalk(!call.isPushToTalk)
+                } label: {
+                    Group {
+                        if call.isPushToTalk {
+                            Label("Hands-free", systemImage: "person.wave.2")
+                        } else {
+                            Label("Tap to talk", systemImage: "hand.tap")
+                        }
+                    }
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.accent)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    // iOS's own Mic Mode picker (Standard / Voice Isolation / Wide Spectrum).
+                    AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+                } label: {
+                    Label("Mic mode", systemImage: "mic.badge.plus")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .disabled(!isLive)
+        .opacity(isLive ? 1 : 0.4)
     }
 
     // MARK: Controls

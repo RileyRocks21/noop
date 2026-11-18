@@ -55,6 +55,9 @@ final class VoiceCallStore: ObservableObject {
     @Published private(set) var isMuted = false
     @Published private(set) var isSpeaker = false
     @Published private(set) var connectedAt: Date?
+    /// Tap-to-talk: Jarvis only hears you while the talk button is held (for noisy rooms).
+    @Published private(set) var isPushToTalk = false
+    @Published private(set) var isHoldingTalk = false
     /// Drives the full-screen call UI. Set when a call starts; cleared when the ended screen is dismissed.
     @Published var isPresented = false
 
@@ -153,6 +156,8 @@ final class VoiceCallStore: ObservableObject {
     }
 
     private func finish(reason: String?) {
+        isPushToTalk = false
+        isHoldingTalk = false
         reconnectDeadline?.cancel()
         reconnectDeadline = nil
         room = nil
@@ -190,6 +195,50 @@ final class VoiceCallStore: ObservableObject {
         AudioManager.shared.isSpeakerOutputPreferred = isSpeaker
         // The proximity sensor blanks the screen at the ear; pointless (and annoying) on speaker.
         UIDevice.current.isProximityMonitoringEnabled = !isSpeaker && isActive
+    }
+
+    // MARK: Tap-to-talk
+    //
+    // The voice agent gates its own input (LiveKit RPC: ptt_mode / ptt_start / ptt_end / ptt_cancel), so
+    // the mic track stays published and a press has no unmute delay; between presses the agent ignores
+    // everything it hears.
+
+    func setPushToTalk(_ on: Bool) {
+        guard phase == .connected || phase == .reconnecting else { return }
+        let was = isPushToTalk
+        isPushToTalk = on
+        isHoldingTalk = false
+        Task {
+            if await rpc("ptt_mode", payload: on ? #"{"on":true}"# : #"{"on":false}"#) == nil {
+                await MainActor.run { self.isPushToTalk = was }
+            }
+        }
+    }
+
+    func talkPressed() {
+        guard isPushToTalk, !isHoldingTalk else { return }
+        isHoldingTalk = true
+        if isMuted { toggleMute() }
+        Task { _ = await rpc("ptt_start") }
+    }
+
+    func talkReleased(cancelled: Bool = false) {
+        guard isPushToTalk, isHoldingTalk else { return }
+        isHoldingTalk = false
+        Task { _ = await rpc(cancelled ? "ptt_cancel" : "ptt_end") }
+    }
+
+    /// Calls a method on the voice agent; nil when there's no agent or it failed.
+    private func rpc(_ method: String, payload: String = "") async -> String? {
+        guard let room else { return nil }
+        guard let agent = room.remoteParticipants.values.first(where: { $0.kind == .agent }),
+              let identity = agent.identity else { return nil }
+        do {
+            return try await room.localParticipant.performRpc(destinationIdentity: identity, method: method,
+                                                              payload: payload, responseTimeout: 8)
+        } catch {
+            return nil
+        }
     }
 
     // MARK: Room events (forwarded from CallRoomDelegate on the main actor)
