@@ -182,6 +182,7 @@ struct RootTabView: View {
             .simultaneousGesture(tabSwipeGesture,
                                  including: tabPaths[selectedTab].isEmpty ? .all : .subviews)
         .task {
+            HomeLayoutTrim.applyOnce()
             await repo.refresh()
             // Start the agent approvals feed early so the Jarvis-tab badge is live before the first visit.
             ApprovalsStore.shared.start()
@@ -200,6 +201,14 @@ struct RootTabView: View {
             withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) {
                 tabPaths[6] = NavigationPath()
                 selectedTab = 6
+            }
+        }
+        // Today's nutrition card opens the Nutrition page, a More destination.
+        .onReceive(NotificationCenter.default.publisher(for: NutritionNav.openNotification)) { _ in
+            withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.24)) {
+                selectedTab = 4
+                tabPaths[4] = NavigationPath()
+                tabPaths[4].append(MoreDestination.nutrition)
             }
         }
         // Quick-action sheet presents with the calm easing (~0.42s) per the README sheet spec —
@@ -480,70 +489,32 @@ struct RootTabView: View {
             ScreenScaffold(title: "More", subtitle: "Everything else, one tap away",
                            onRefresh: { await repo.refresh() },
                            topBackground: liquidScaffoldSky()) {
+                // Trimmed to the screens this build is used for (33 rows → 15). The removed screens'
+                // MoreDestination cases stay, so deep links and notifications that push them still work.
                 moreSection("Agent") {
                     // Chat, Tasks, Inbox and Approvals live in the Jarvis tab; More keeps the agent's
-                    // configuration (the Server row sits under App).
+                    // configuration and the server connection.
                     MoreRow("Agent Settings", "brain", .agentSettings)
+                    MoreRow("Server", "network", .serverSettings)
                 }
                 moreSection("Insights") {
                     MoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
-                    MoreRow("Intelligence", "brain.head.profile", .intelligence)
-                    // Coach is a pushed destination: the tab bar holds five (Today, Trends, Sleep,
-                    // Jarvis, More), so a sixth tab would overflow into iOS's system "More".
-                    MoreRow("Coach", "sparkles", .coach)
-                    MoreRow("Insights", "lightbulb.fill", .insights)
                     MoreRow("Explore", "square.grid.2x2.fill", .explore)
-                    MoreRow("Compare", "rectangle.split.2x1.fill", .compare)
                 }
                 moreSection("Body") {
-                    // Nutrition gave its tab to Jarvis; Today's calorie numbers still come from the strap.
                     MoreRow("Nutrition", "fork.knife", .nutrition)
-                    MoreRow("Live", "waveform.path.ecg", .live)
                     MoreRow("Workouts", "figure.run", .workouts)
-                    MoreRow("Lift Log", "dumbbell.fill", .liftLog)
                     MoreRow("Health", "heart.text.square.fill", .health)
-                    MoreRow("Lab Book", "books.vertical.fill", .labBook)
                     MoreRow("Stress", "bolt.heart.fill", .stress)
                     MoreRow("Breathe", "wind", .breathe)
-                    MoreRow("Intervals", "timer", .intervals)
-                    // Experimental beat-to-beat regularity visualization — self-gates on its own consent.
-                    MoreRow("Rhythm", "waveform.path", .rhythm)
-                }
-                moreSection("Data") {
-                    MoreRow("Your Data, Fused", "square.stack.3d.up.fill", .fusedRecord)
-                    MoreRow("Apple Health", "heart.fill", .appleHealth)
-                    MoreRow("Mi Band", "figure.walk.motion", .miBand)
-                    MoreRow("Data Sources", "externaldrive.fill", .dataSources)
-                    MoreRow("Backup & Sync", "externaldrive.fill.badge.icloud", .backupSync)
-                    // #155: HealthKit-free Apple Health path for sideloaded installs (Siri Shortcut
-                    // reads the opt-in Documents/noop_sync.txt drop file).
-                    MoreRow("Shortcuts Export", "square.and.arrow.up.fill", .shortcutsExport)
-                    // The plain 4.0 vs 5.0/MG capability grid — what NOOP reads live off each strap.
-                    MoreRow("NOOP Limitations", "list.bullet.rectangle", .noopLimitations)
                 }
                 moreSection("App") {
-                    // #805/#811: the v7.3.1 #766 alarm consolidation moved Smart Alarm under a single
-                    // "Alarms" sidebar entry (RootView .smartAlarm) but the regression dropped the row
-                    // from the iPhone More list, leaving Alarms unreachable on iPhone. Restore it here
-                    // (route to SmartAlarmView, the cross-platform iOS/macOS surface).
-                    //
-                    // Notifications (RootView .notifications) is deliberately NOT added: that screen is
-                    // macOS-only (it picks which Mac apps tap your wrist via NSWorkspace, imports AppKit,
-                    // and project.yml excludes Screens/NotificationSettingsView.swift from the iOS target),
-                    // so it can't compile or apply on iPhone. iPhone's wrist-alert controls live on the
-                    // Automations screen instead. Its absence from the iPhone More list is correct.
                     MoreRow("Alarms", "alarm.fill", .alarms)
-                    // Custom countdown timers that buzz the watch when they finish.
-                    MoreRow("Timers", "timer", .timers)
-                    // noop-agent backend: server URL, test connection, unpair.
-                    MoreRow("Server", "network", .serverSettings)
-                    MoreRow("Automations", "wand.and.stars", .automations)
-                    // The Test Centre (the diagnostics + bug-report hub) gets a first-class home here, not
-                    // just buried in Settings, so the feedback loop is one tap from the More tab.
+                    MoreRow("Data Sources", "externaldrive.fill", .dataSources)
+                    MoreRow("Backup & Sync", "externaldrive.fill.badge.icloud", .backupSync)
+                    // The diagnostics + bug-report hub.
                     MoreRow("Test Centre", "stethoscope", .testCentre)
-                    MoreRow("Siri & Shortcuts", "mic.fill", .siriShortcuts)
-                    // #477 lives here rather than inside Settings: the strap-battery levers are the
-                    // ones people reach for when a strap is running down, so they get their own row.
+                    // #477: the strap-battery levers.
                     MoreRow("Power saving", "battery.25", .powerSaving)
                     MoreRow("Settings", "gearshape.fill", .settings)
                 }
@@ -823,5 +794,22 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+/// One-time Today trim for this build: hides the Start-session and Last-workouts sections through the
+/// user's own hidden-sections preference (the same one the Arrange sheet edits), so they can be turned
+/// back on there. Runs once per install; later choices in the Arrange sheet are left alone.
+enum HomeLayoutTrim {
+    private static let doneKey = "noop.agent.homeTrim.v1"
+
+    static func applyOnce(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: doneKey) else { return }
+        var hidden = TodayLayoutPrefs.decodeHidden(defaults.string(forKey: TodayLayoutPrefs.hiddenKey) ?? "")
+        for section in [TodaySection.liveSession, .workouts] where !hidden.contains(section) {
+            hidden.append(section)
+        }
+        defaults.set(TodayLayoutPrefs.encodeHidden(hidden), forKey: TodayLayoutPrefs.hiddenKey)
+        defaults.set(true, forKey: doneKey)
     }
 }
