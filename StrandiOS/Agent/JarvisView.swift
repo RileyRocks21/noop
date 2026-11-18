@@ -4,17 +4,17 @@ import StrandDesign
 
 // MARK: - Jarvis tab
 //
-// The one tab that holds everything the noop-agent backend does for the wearer: Chat, Tasks, Inbox and
-// Approvals behind a pinned segmented switcher. The health app keeps its original tab bar (Today,
+// The one tab that holds everything the noop-agent backend does for the wearer: Chat, Tasks, Inbox,
+// Alerts (notification history) and Approvals behind a pinned segmented switcher. The health app keeps its original tab bar (Today,
 // Trends, Sleep, …); the agent is a single destination inside it rather than owning the bar.
 //
 // Each section is the existing screen, unchanged — they keep their own in-content titles, pairing
 // gates and refresh. JarvisView only adds the switcher and the routing state that lets Today's Jarvis
 // card (and the shell) land on a specific section.
 
-/// The four sections of the Jarvis tab, in switcher order.
+/// The sections of the Jarvis tab, in switcher order.
 enum JarvisSection: String, CaseIterable, Identifiable {
-    case chat, tasks, inbox, approvals
+    case chat, tasks, inbox, alerts, approvals
 
     var id: String { rawValue }
 
@@ -23,6 +23,7 @@ enum JarvisSection: String, CaseIterable, Identifiable {
         case .chat: return "Chat"
         case .tasks: return "Tasks"
         case .inbox: return "Inbox"
+        case .alerts: return "Alerts"
         case .approvals: return "Approvals"
         }
     }
@@ -60,6 +61,7 @@ struct JarvisView: View {
         case .chat: ChatView()
         case .tasks: TasksView()
         case .inbox: InboxView()
+        case .alerts: NotificationsView()
         case .approvals: ApprovalsView()
         }
     }
