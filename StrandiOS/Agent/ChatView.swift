@@ -74,15 +74,23 @@ struct ChatView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 }
+                // Open at the newest message, and stay pinned there as replies grow.
+                .defaultScrollAnchor(.bottom)
                 // Drag the conversation down to pull the keyboard away with it (Messages-style).
                 .scrollDismissesKeyboard(.interactively)
                 // A tap on the conversation dismisses too. Simultaneous, so "Load earlier messages" and
                 // text selection in bubbles keep working.
                 .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
-                .onChange(of: store.messages.count) { _, _ in
-                    if let last = store.messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
+                // The LAST id, not the count: a refetch that swaps the page keeps the count but changes
+                // what's newest, and the first load must land at the bottom too.
+                .onChange(of: store.messages.last?.id) { _, _ in
+                    scrollToEnd(proxy, animated: true)
+                }
+                .onAppear { scrollToEnd(proxy, animated: false) }
+                // Keyboard up: keep the newest message visible above the input bar.
+                .onChange(of: inputFocused) { _, focused in
+                    guard focused else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scrollToEnd(proxy, animated: true) }
                 }
                 .onChange(of: store.streamingText) { _, _ in
                     if let id = store.streamingId {
@@ -90,38 +98,43 @@ struct ChatView: View {
                     }
                 }
             }
-
-            if let error = store.errorMessage {
-                Text(error)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.metricRose)
-                    .padding(.horizontal, 14)
-            }
-
-            // Input bar
-            HStack(spacing: 10) {
-                TextField("Message your agent…", text: $draft, axis: .vertical)
-                    .focused($inputFocused)
-                    .textFieldStyle(.plain)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(1...5)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(StrandPalette.surfaceInset))
-                Button {
-                    store.send(draft)
-                    draft = ""
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(StrandPalette.accent)
+        }
+        // The input bar rides the bottom safe area (keyboard included), so it always sits on top of the
+        // keyboard and the conversation scrolls above it instead of behind it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                if let error = store.errorMessage {
+                    Text(error)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.metricRose)
+                        .padding(.horizontal, 14)
                 }
-                .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isSending)
+
+                // Input bar
+                HStack(spacing: 10) {
+                    TextField("Message your agent…", text: $draft, axis: .vertical)
+                        .focused($inputFocused)
+                        .textFieldStyle(.plain)
+                        .font(StrandFont.body)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1...5)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(StrandPalette.surfaceInset))
+                    Button {
+                        store.send(draft)
+                        draft = ""
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(StrandPalette.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isSending)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
             .background(StrandPalette.surfaceBase)
         }
         .background(StrandPalette.surfaceBase.ignoresSafeArea())
@@ -134,6 +147,15 @@ struct ChatView: View {
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.accent)
             }
+        }
+    }
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let id = store.streamingId ?? store.messages.last?.id else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) }
+        } else {
+            proxy.scrollTo(id, anchor: .bottom)
         }
     }
 

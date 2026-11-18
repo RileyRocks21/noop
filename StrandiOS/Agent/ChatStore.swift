@@ -59,7 +59,7 @@ final class ChatStore: ObservableObject {
         defer { isLoadingHistory = false }
         do {
             let page: AgentMessagesPage = try await AgentAPI.shared.get("/conversations/default/messages")
-            messages = page.messages
+            messages = Self.chronological(page.messages)
             nextBefore = page.nextBefore
             errorMessage = nil
         } catch {
@@ -74,11 +74,23 @@ final class ChatStore: ObservableObject {
         do {
             let page: AgentMessagesPage = try await AgentAPI.shared.get(
                 "/conversations/default/messages", query: ["before": before])
-            messages = page.messages + messages
+            let known = Set(messages.map(\.id))
+            messages = Self.chronological(page.messages.filter { !known.contains($0.id) } + messages)
             nextBefore = page.nextBefore
         } catch {
             errorMessage = NutritionStore.describe(error)
         }
+    }
+
+    /// Oldest first, the order a chat reads in, whatever order the server or the socket delivered.
+    /// Stable, so same-second messages keep their arrival order; undated ones stay where they are.
+    static func chronological(_ list: [AgentChatMessage]) -> [AgentChatMessage] {
+        list.enumerated().sorted { a, b in
+            switch (a.element.createdAt, b.element.createdAt) {
+            case let (x?, y?) where x != y: return x < y
+            default: return a.offset < b.offset
+            }
+        }.map(\.element)
     }
 
     // MARK: Sending
@@ -129,7 +141,7 @@ final class ChatStore: ObservableObject {
                 if let i = messages.firstIndex(where: { $0.id == message.id }) {
                     messages[i] = stored
                 } else {
-                    messages.append(stored)
+                    messages = Self.chronological(messages + [stored])
                 }
             }
         case "tool.started":

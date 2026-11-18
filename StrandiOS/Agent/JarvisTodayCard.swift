@@ -23,6 +23,7 @@ struct JarvisTodayCard: View {
     @ObservedObject private var tasks = TasksStore.shared
     @ObservedObject private var approvals = ApprovalsStore.shared
     @ObservedObject private var alerts = NotificationsStore.shared
+    @State private var briefExpanded = false
 
     var body: some View {
         if config.isPaired {
@@ -127,30 +128,50 @@ struct JarvisTodayCard: View {
 
     // MARK: Brief
 
+    /// The brief reads in full right here: tap it (or "Show more") to expand in place. Asking about it is a
+    /// separate, explicit button, so reading the brief never throws the wearer into Chat.
     private func briefBlock(_ brief: AgentBrief) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Button {
-                AgentNav.openChat(about: "Tell me more about today's brief.")
-            } label: {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 Text(brief.script)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(3)
+                    .lineLimit(briefExpanded ? nil : 4)
                     .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: briefExpanded)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { briefExpanded.toggle() } }
+                if brief.audioUrl != nil {
+                    Button {
+                        today.toggleBriefAudio()
+                    } label: {
+                        Image(systemName: today.isPlayingBrief ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(StrandPalette.accent)
+                    }
+                    .buttonStyle(.plain)
+                    // Text, not a String ternary: a String label bypasses the catalogue.
+                    .accessibilityLabel(today.isPlayingBrief ? Text("Pause brief") : Text("Play brief"))
+                }
             }
-            .buttonStyle(.plain)
-            if brief.audioUrl != nil {
+            HStack(spacing: 16) {
                 Button {
-                    today.toggleBriefAudio()
+                    withAnimation(.easeOut(duration: 0.2)) { briefExpanded.toggle() }
                 } label: {
-                    Image(systemName: today.isPlayingBrief ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 28))
+                    Text(briefExpanded ? "Show less" : "Show more")
+                        .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.accent)
                 }
                 .buttonStyle(.plain)
-                // Text, not a String ternary: a String label bypasses the catalogue.
-                .accessibilityLabel(today.isPlayingBrief ? Text("Pause brief") : Text("Play brief"))
+                Button {
+                    AgentNav.openChat(about: "Tell me more about today's brief.")
+                } label: {
+                    Text("Ask about it")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
