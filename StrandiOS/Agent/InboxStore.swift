@@ -36,6 +36,12 @@ final class InboxStore: ObservableObject {
     }
 
     func refresh() async {
+        // Runs outside the caller's task: SwiftUI cancels a pull-to-refresh task when the list re-renders
+        // mid-request, which showed up as URLError -999 instead of fresh data.
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -45,7 +51,7 @@ final class InboxStore: ObservableObject {
             items = r.items.sorted { ($0.receivedAt ?? .distantPast) > ($1.receivedAt ?? .distantPast) }
             errorMessage = nil
         } catch {
-            errorMessage = NutritionStore.describe(error)
+            if !AgentErrors.isCancellation(error) { errorMessage = NutritionStore.describe(error) }
         }
     }
 

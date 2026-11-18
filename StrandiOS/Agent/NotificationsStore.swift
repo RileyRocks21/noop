@@ -59,6 +59,12 @@ final class NotificationsStore: ObservableObject {
 
     /// Reload the newest page (keeps any older pages already loaded beyond it).
     func refresh() async {
+        // Runs outside the caller's task: SwiftUI cancels a pull-to-refresh task when the list re-renders
+        // mid-request, which showed up as URLError -999 instead of fresh data.
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -75,7 +81,7 @@ final class NotificationsStore: ObservableObject {
             if older.isEmpty { reachedEnd = fresh.count < Self.pageSize }
             errorMessage = nil
         } catch {
-            errorMessage = NutritionStore.describe(error)
+            if !AgentErrors.isCancellation(error) { errorMessage = NutritionStore.describe(error) }
         }
     }
 
@@ -94,7 +100,7 @@ final class NotificationsStore: ObservableObject {
             unread = page.unread
             reachedEnd = page.notifications.count < Self.pageSize
         } catch {
-            errorMessage = NutritionStore.describe(error)
+            if !AgentErrors.isCancellation(error) { errorMessage = NutritionStore.describe(error) }
         }
     }
 

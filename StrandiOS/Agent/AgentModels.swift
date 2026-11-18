@@ -183,6 +183,18 @@ struct AgentSendResponse: Codable {
     var messageId: String
 }
 
+// MARK: - Errors
+
+enum AgentErrors {
+    /// A request the app itself abandoned (a superseded refresh, a view that went away). Not worth an error
+    /// banner: the next refresh or socket refetch loads the data.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let url = error as? URLError, url.code == .cancelled { return true }
+        return false
+    }
+}
+
 // MARK: - Shared coders
 
 enum AgentCoders {

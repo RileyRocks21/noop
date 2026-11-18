@@ -46,6 +46,12 @@ final class ApprovalsStore: ObservableObject {
     }
 
     func refresh() async {
+        // Runs outside the caller's task: SwiftUI cancels a pull-to-refresh task when the list re-renders
+        // mid-request, which showed up as URLError -999 instead of fresh data.
+        await Task { await self.load() }.value
+    }
+
+    private func load() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -56,7 +62,7 @@ final class ApprovalsStore: ObservableObject {
             pending = r.approvals
             errorMessage = nil
         } catch {
-            errorMessage = NutritionStore.describe(error)
+            if !AgentErrors.isCancellation(error) { errorMessage = NutritionStore.describe(error) }
         }
     }
 
