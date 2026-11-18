@@ -360,6 +360,7 @@ struct LiquidTodayView: View {
                     // reorderable block because `today.sectionOrder` is a byte-identical key shared with
                     // Android, which has no agent. Shows a small "Connect Jarvis" row until paired.
                     if selectedDayOffset == 0 { JarvisTodayCard() }
+                    if selectedDayOffset == 0 { NutritionTodayCard() }
                     #endif
                     // #105: the live "workout in progress" card, dropped in the liquid Home rewrite. Restored
                     // here as the SAME leaf the classic TodayView renders (and Android's WorkoutInProgressCard),
