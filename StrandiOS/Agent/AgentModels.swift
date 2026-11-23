@@ -66,6 +66,10 @@ struct AgentChatMessage: Codable, Identifiable, Equatable {
     var channel: String?         // "chat" | "voice" | "system"
     var createdAt: Date?
     var tools: [ToolRef]?
+    /// The id the app sent with a user message (null on everything else). The optimistic local copy
+    /// is `local-<clientId>`; the server's copy carries the same clientId, which is how one replaces
+    /// the other.
+    var clientId: String?
 }
 
 struct AgentBrief: Codable, Equatable {
@@ -180,7 +184,9 @@ struct AgentMessagesPage: Codable {
 }
 
 struct AgentSendResponse: Codable {
-    var messageId: String
+    /// The assistant reply that will stream; null when the server recognised a resend (same clientId).
+    var messageId: String?
+    var userMessageId: String?
 }
 
 // MARK: - Errors
