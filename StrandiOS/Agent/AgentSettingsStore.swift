@@ -17,6 +17,10 @@ final class AgentSettingsStore: ObservableObject {
     @Published private(set) var memories: [AgentMemory] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isSaving = false
+    /// True from the moment a local edit is staged until the server has answered the newest one.
+    /// The view only adopts `settings` while this is false, so a slow response never overwrites a
+    /// newer edit.
+    @Published private(set) var isDirty = false
     @Published var errorMessage: String?
     /// Set briefly after a successful save so the UI can show a checkmark.
     @Published private(set) var savedTick = false
@@ -53,21 +57,66 @@ final class AgentSettingsStore: ObservableObject {
 
     // MARK: Settings
 
+    /// The newest local draft: what the user last edited if a save is still pending or on the
+    /// wire, else the server copy. A view that (re)appears mid-save starts from this.
+    var currentDraft: AgentSettings { saveQueue.latest ?? settings }
+
+    /// Stage `updated` and save it after a short debounce. Latest wins: edits made while a save is
+    /// in flight are held and the newest is sent as soon as that save returns, so rapid taps end
+    /// on the last value instead of being dropped.
     func save(_ updated: AgentSettings) {
-        guard !isSaving else { return }
+        saveQueue.enqueue(updated)
+        isDirty = true
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.saveDebounce)
+            guard !Task.isCancelled, let self else { return }
+            self.debounceTask = nil
+            self.pumpSave()
+        }
+    }
+
+    private static let saveDebounce: Duration = .milliseconds(600)
+    private var saveQueue = AgentSaveQueue<AgentSettings>()
+    private var debounceTask: Task<Void, Never>?
+    private var savedTickTask: Task<Void, Never>?
+
+    private func pumpSave() {
+        guard let next = saveQueue.begin() else { return }
         isSaving = true
         Task {
-            defer { isSaving = false }
+            var saved: AgentSettings?
             do {
-                let saved: AgentSettings = try await AgentAPI.shared.put("/settings", body: updated)
-                settings = saved
+                let response: AgentSettings = try await AgentAPI.shared.put("/settings", body: next)
+                saved = response
                 errorMessage = nil
-                savedTick = true
-                try? await Task.sleep(for: .seconds(1.5))
-                savedTick = false
             } catch {
                 errorMessage = NutritionStore.describe(error)
             }
+            let more = saveQueue.finish()
+            if more {
+                // A newer draft arrived while this one was on the wire. Send it now unless a
+                // debounce is still running for it (that one will pump when it fires).
+                if debounceTask == nil { pumpSave() } else { isSaving = false }
+                return
+            }
+            isSaving = false
+            // Clear the dirty flag BEFORE publishing the server copy so the view accepts it.
+            isDirty = debounceTask != nil
+            if let saved {
+                settings = saved
+                flashSaved()
+            }
+        }
+    }
+
+    private func flashSaved() {
+        savedTickTask?.cancel()
+        savedTick = true
+        savedTickTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.savedTick = false
         }
     }
 
