@@ -20,6 +20,12 @@ struct AgentSettingsView: View {
     @State private var newMemory = ""
     @State private var liveBrowser: AgentAuthRequest?
     @State private var isRequestingBrowser = false
+    @State private var liveBrowserError: String?
+    /// The iCal field's text. Kept apart from `draft` so typing never saves a half-typed URL; it
+    /// commits on submit and when focus leaves the field.
+    @State private var icalText = ""
+    @State private var icalError = false
+    @FocusState private var icalFocused: Bool
 
     private static let categories = ["school", "email", "health", "markets", "reminders"]
     private static let levels = ["off", "brief", "silent", "sound", "call"]
@@ -34,11 +40,25 @@ struct AgentSettingsView: View {
         }
         .navigationTitle("Agent")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { saveStatus }
+        }
         .onAppear {
             store.start()
-            draft = store.settings
+            draft = store.currentDraft
+            icalText = draft.icalUrl ?? ""
         }
-        .onChange(of: store.settings) { _, new in draft = new }
+        .onDisappear { commitICal() }
+        // Adopt the server copy only when no local edit is waiting on it; otherwise a slow
+        // response to an older save would revert the newer edit on screen.
+        .onChange(of: store.settings) { _, new in
+            guard !store.isDirty else { return }
+            draft = new
+            if !icalFocused {
+                icalText = new.icalUrl ?? ""
+                icalError = false
+            }
+        }
         .sheet(isPresented: $showServer) {
             NavigationStack {
                 ServerSettingsView()
@@ -73,10 +93,25 @@ struct AgentSettingsView: View {
             if let error = store.errorMessage {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.footnote)
+                        .foregroundStyle(StrandPalette.statusCritical)
+                        .font(StrandFont.footnote)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var saveStatus: some View {
+        if store.savedTick {
+            Label("Saved", systemImage: "checkmark.circle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.statusPositive)
+                .transition(.opacity)
+        } else if store.isSaving {
+            Text("Saving…")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textSecondary)
         }
     }
 
@@ -91,14 +126,14 @@ struct AgentSettingsView: View {
                     Label("Server & pairing", systemImage: "network")
                     Spacer()
                     Text(config.baseURL?.host ?? "Not set")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textSecondary)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .font(StrandFont.rounded(13, weight: .semibold))
+                        .foregroundStyle(StrandPalette.textTertiary)
                 }
             }
-            .foregroundStyle(.primary)
+            .foregroundStyle(StrandPalette.textPrimary)
         }
     }
 
@@ -108,18 +143,18 @@ struct AgentSettingsView: View {
         Section {
             if store.integrations.isEmpty {
                 Text("No integrations reported yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textSecondary)
             }
             ForEach(store.integrations) { integration in
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(integration.provider.capitalized)
-                            .font(.body)
+                            .font(StrandFont.body)
                         if let at = integration.lastSyncAt {
                             Text("Synced \(at.formatted(.relative(presentation: .named)))")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textSecondary)
                         }
                     }
                     Spacer()
@@ -127,7 +162,8 @@ struct AgentSettingsView: View {
                     if integration.status == "needs_auth", let raw = integration.connectUrl,
                        let url = URL(string: raw) {
                         Button("Connect") { openURL(url) }
-                            .font(.footnote)
+                            .font(StrandFont.footnote)
+                            .tint(StrandPalette.accent)
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
                     }
@@ -141,29 +177,38 @@ struct AgentSettingsView: View {
     }
 
     private func statusChip(_ status: String?) -> some View {
-        let (label, color): (String, Color) = {
+        let (label, tone): (LocalizedStringKey, StrandTone) = {
             switch status {
-            case "ok":         return ("OK", .green)
-            case "needs_auth": return ("Needs auth", .orange)
-            case "failing":    return ("Failing", .red)
-            default:           return ("Unknown", .secondary)
+            case "ok":         return ("OK", .positive)
+            case "needs_auth": return ("Needs auth", .warning)
+            case "failing":    return ("Failing", .critical)
+            default:           return ("Unknown", .neutral)
             }
         }()
-        return Text(label)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.15)))
-            .foregroundStyle(color)
+        return StatePill(label, tone: tone, showsDot: false)
     }
 
     // MARK: Brightspace feed
 
     private var feedSection: some View {
         Section {
-            TextField("https://…/feed.ics", text: icalBinding)
+            TextField("https://…/feed.ics", text: $icalText)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.done)
+                .focused($icalFocused)
+                .onSubmit { commitICal() }
+                .onChange(of: icalFocused) { _, focused in
+                    if !focused { commitICal() }
+                }
+                .onChange(of: icalText) { _, _ in icalError = false }
+            if icalError {
+                Label("Enter a URL that starts with http:// or https://.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.statusCritical)
+            }
         } header: {
             Text("Brightspace")
         } footer: {
@@ -171,11 +216,21 @@ struct AgentSettingsView: View {
         }
     }
 
-    private var icalBinding: Binding<String> {
-        Binding(
-            get: { draft.icalUrl ?? "" },
-            set: { draft.icalUrl = $0.isEmpty ? nil : $0 }
-        )
+    /// Validate the field and, when it changed, save it. An invalid URL stays in the field with an
+    /// inline error and is not sent.
+    private func commitICal() {
+        let value: String?
+        switch AgentICalURL.validate(icalText) {
+        case .empty:            value = nil
+        case .valid(let url):   value = url
+        case .invalid:
+            icalError = true
+            return
+        }
+        icalError = false
+        guard value != draft.icalUrl else { return }
+        draft.icalUrl = value
+        commit()
     }
 
     // MARK: Quiet hours
@@ -251,13 +306,13 @@ struct AgentSettingsView: View {
             ForEach(draft.watchlist ?? []) { symbol in
                 HStack {
                     Text(symbol.symbol)
-                        .font(.body.weight(.semibold))
+                        .font(StrandFont.headline)
                     Spacer()
                     Stepper(value: watchlistPctBinding(symbol.symbol),
                             in: 0.5...20, step: 0.5) {
                         Text("±\(String(format: "%.1f", symbol.movePct ?? 3))%")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
                     }
                 }
             }
@@ -313,11 +368,11 @@ struct AgentSettingsView: View {
                         store.updateMemory(memory, pinned: !(memory.pinned ?? false))
                     } label: {
                         Image(systemName: (memory.pinned ?? false) ? "pin.fill" : "pin")
-                            .foregroundStyle((memory.pinned ?? false) ? StrandPalette.accent : .secondary)
+                            .foregroundStyle((memory.pinned ?? false) ? StrandPalette.accent : StrandPalette.textSecondary)
                     }
                     .buttonStyle(.plain)
                     Text(memory.text)
-                        .font(.subheadline)
+                        .font(StrandFont.subhead)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -348,8 +403,13 @@ struct AgentSettingsView: View {
             Button {
                 Task {
                     isRequestingBrowser = true
+                    liveBrowserError = nil
                     defer { isRequestingBrowser = false }
-                    liveBrowser = try? await store.requestAuth(site: "brightspace")
+                    do {
+                        liveBrowser = try await store.requestAuth(site: "brightspace")
+                    } catch {
+                        liveBrowserError = NutritionStore.describe(error)
+                    }
                 }
             } label: {
                 HStack {
@@ -358,6 +418,11 @@ struct AgentSettingsView: View {
                 }
             }
             .disabled(isRequestingBrowser)
+            if let liveBrowserError {
+                Label(liveBrowserError, systemImage: "exclamationmark.triangle.fill")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.statusCritical)
+            }
         } footer: {
             Text("Watch the agent log into Brightspace for you and take over if it gets stuck.")
         }
