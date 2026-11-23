@@ -23,6 +23,10 @@ enum FindPhoneSound {
     /// Keeps the invisible volume view alive for the app's lifetime once created.
     private static var volumeView: MPVolumeView?
 
+    /// True while the siren is sounding. A strap double-tap uses this to stop the siren instead of
+    /// restarting it.
+    static var isPlaying: Bool { player?.isPlaying == true }
+
     static func play() {
         guard let url = Bundle.main.url(forResource: "findphone", withExtension: "wav") else { return }
 

@@ -10,6 +10,13 @@ final class BehaviorStore: ObservableObject {
     // MARK: Double-tap → Mac action
     @Published var doubleTapAction: MacActionKind { didSet { d.set(doubleTapAction.rawValue, forKey: K.dtAction) } }
     @Published var doubleTapShortcut: String { didSet { d.set(doubleTapShortcut, forKey: K.dtShortcut) } }
+    /// How many double-taps it takes to run the action (`DoubleTapGate`). Default `.low` (two within
+    /// 4 s), for existing installs too: the strap's own gesture detector fires on knocks, and a single
+    /// false double-tap was enough to set off the Find iPhone siren. Not in the `.noopbak` whitelist.
+    @Published var doubleTapSensitivity: DoubleTapSensitivity { didSet { d.set(doubleTapSensitivity.rawValue, forKey: K.dtSensitivity) } }
+    /// One short strap buzz when the first double-tap of a multi-tap sequence counts, so the wearer
+    /// knows to tap again. Default ON. Not in the `.noopbak` whitelist.
+    @Published var doubleTapArmBuzz: Bool { didSet { d.set(doubleTapArmBuzz, forKey: K.dtArmBuzz) } }
 
     // MARK: Wear automation
     /// Lock the Mac when the strap comes off the wrist.
@@ -61,6 +68,8 @@ final class BehaviorStore: ObservableObject {
     private enum K {
         static let dtAction = "behavior.doubleTapAction"
         static let dtShortcut = "behavior.doubleTapShortcut"
+        static let dtSensitivity = "behavior.doubleTapSensitivity"
+        static let dtArmBuzz = "behavior.doubleTapArmBuzz"
         static let autoLock = "behavior.autoLockOnWristOff"
         static let wristOffShortcut = "behavior.wristOffShortcut"
         static let wristOnShortcut = "behavior.wristOnShortcut"
@@ -85,6 +94,8 @@ final class BehaviorStore: ObservableObject {
     init() {
         doubleTapAction = MacActionKind(rawValue: d.string(forKey: K.dtAction) ?? "") ?? .none
         doubleTapShortcut = d.string(forKey: K.dtShortcut) ?? ""
+        doubleTapSensitivity = DoubleTapSensitivity(rawValue: d.string(forKey: K.dtSensitivity) ?? "") ?? .low
+        doubleTapArmBuzz = d.object(forKey: K.dtArmBuzz) as? Bool ?? true
         autoLockOnWristOff = d.object(forKey: K.autoLock) as? Bool ?? false
         wristOffShortcut = d.string(forKey: K.wristOffShortcut) ?? ""
         wristOnShortcut = d.string(forKey: K.wristOnShortcut) ?? ""
