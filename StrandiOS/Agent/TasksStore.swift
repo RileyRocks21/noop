@@ -3,8 +3,8 @@ import Foundation
 
 // MARK: - Tasks store
 //
-// GET /tasks?status=open grouped Overdue / Today / This week / Later; add (POST), complete and
-// snooze (PATCH). The socket's `task.updated` event patches a single row in place so changes from
+// GET /tasks?status=open grouped Overdue / Today / This week / Later; add (POST), complete, snooze
+// and edit (PATCH). A completion stays undoable for a few seconds. The socket's `task.updated` event patches a single row in place so changes from
 // the server appear live without a refetch.
 
 @MainActor
@@ -14,6 +14,12 @@ final class TasksStore: ObservableObject {
     @Published private(set) var tasks: [AgentTask] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
+    /// The task just marked done, while its Undo bar is showing.
+    @Published private(set) var recentlyCompleted: AgentTask?
+
+    /// How long the Undo bar stays up after a completion.
+    static let undoWindow: TimeInterval = 5
+    private var undoExpiry: Task<Void, Never>?
 
     private var subscription: UUID?
     private var started = false
@@ -82,10 +88,82 @@ final class TasksStore: ObservableObject {
     }
 
     func complete(_ task: AgentTask) {
-        patch(task, body: ["status": "done"])
+        Task {
+            do {
+                let updated: AgentTask = try await AgentAPI.shared.patch(
+                    "/tasks/\(task.id)", body: StatusBody(status: "done"))
+                apply(updated)
+                showUndo(for: updated)
+            } catch {
+                errorMessage = NutritionStore.describe(error)
+            }
+        }
     }
 
-    /// Snooze presets: +1 hour, tonight (20:00 local), tomorrow morning (08:00 local).
+    /// Reopens the task behind the Undo bar.
+    func undoComplete() {
+        guard let task = recentlyCompleted else { return }
+        dismissUndo()
+        patch(task, body: ["status": "open"])
+    }
+
+    func dismissUndo() {
+        undoExpiry?.cancel()
+        undoExpiry = nil
+        recentlyCompleted = nil
+    }
+
+    private func showUndo(for task: AgentTask) {
+        undoExpiry?.cancel()
+        recentlyCompleted = task
+        undoExpiry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.undoWindow * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.recentlyCompleted = nil
+        }
+    }
+
+    private struct StatusBody: Encodable { let status: String }
+
+    /// Edits title, due date and priority in one PATCH. Only changed fields are sent; `clearDue`
+    /// sends an explicit `"dueAt": null`, which the server treats as "no due date" (an omitted key
+    /// leaves the date untouched).
+    func update(_ task: AgentTask, title: String?, dueAt: Date?, clearDue: Bool, priority: String? = nil) {
+        let body = EditBody(title: title, dueAt: dueAt, clearDue: clearDue, priority: priority)
+        guard !body.isEmpty else { return }
+        Task {
+            do {
+                let updated: AgentTask = try await AgentAPI.shared.patch("/tasks/\(task.id)", body: body)
+                apply(updated)
+            } catch {
+                errorMessage = NutritionStore.describe(error)
+            }
+        }
+    }
+
+    private struct EditBody: Encodable {
+        let title: String?
+        let dueAt: Date?
+        let clearDue: Bool
+        let priority: String?
+
+        var isEmpty: Bool { title == nil && dueAt == nil && !clearDue && priority == nil }
+
+        enum CodingKeys: String, CodingKey { case title, dueAt, priority }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(title, forKey: .title)
+            if clearDue {
+                try c.encodeNil(forKey: .dueAt)
+            } else {
+                try c.encodeIfPresent(dueAt, forKey: .dueAt)
+            }
+            try c.encodeIfPresent(priority, forKey: .priority)
+        }
+    }
+
+    /// Snooze presets live in `SnoozePreset` (TaskActions.swift); each resolves after now.
     func snooze(_ task: AgentTask, preset: SnoozePreset) {
         let until = preset.date(from: Date())
         struct Body: Encodable { let status: String; let snoozeUntil: Date }
@@ -126,31 +204,6 @@ final class TasksStore: ObservableObject {
             } catch {
                 errorMessage = NutritionStore.describe(error)
             }
-        }
-    }
-}
-
-enum SnoozePreset: String, CaseIterable, Identifiable {
-    case hour, tonight, tomorrow
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .hour:     return String(localized: "Snooze 1 h")
-        case .tonight:  return String(localized: "Tonight")
-        case .tomorrow: return String(localized: "Tomorrow")
-        }
-    }
-    func date(from now: Date) -> Date {
-        let cal = Calendar.current
-        switch self {
-        case .hour:
-            return now.addingTimeInterval(3600)
-        case .tonight:
-            return cal.date(bySettingHour: 20, minute: 0, second: 0, of: now)
-                ?? now.addingTimeInterval(3600 * 4)
-        case .tomorrow:
-            let tomorrow = cal.date(byAdding: .day, value: 1, to: now) ?? now
-            return cal.date(bySettingHour: 8, minute: 0, second: 0, of: tomorrow) ?? tomorrow
         }
     }
 }
