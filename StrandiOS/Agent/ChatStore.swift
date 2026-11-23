@@ -27,6 +27,8 @@ final class ChatStore: ObservableObject {
     @Published private(set) var streamingText = ""
     /// Tool chips keyed by the messageId they belong to.
     @Published private(set) var toolChips: [String: [AgentChatMessage.ToolRef]] = [:]
+    /// clientIds of local messages whose POST failed. Their bubbles say "Not sent — tap to retry".
+    @Published private(set) var failedClientIds: Set<String> = []
 
     /// A prompt handed over by another screen ("open chat about it"). ChatView consumes it into
     /// the draft field rather than auto-sending, so the user can review first.
@@ -59,7 +61,7 @@ final class ChatStore: ObservableObject {
         defer { isLoadingHistory = false }
         do {
             let page: AgentMessagesPage = try await AgentAPI.shared.get("/conversations/default/messages")
-            messages = Self.chronological(page.messages)
+            messages = Self.merging(page: page.messages, keepingLocalFrom: messages)
             nextBefore = page.nextBefore
             errorMessage = nil
         } catch {
@@ -82,6 +84,17 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// A fresh page, plus any local copies (still sending, or failed) the server has not saved yet:
+    /// a refetch must neither drop an unsent message nor show a sent one twice.
+    static func merging(page: [AgentChatMessage], keepingLocalFrom current: [AgentChatMessage]) -> [AgentChatMessage] {
+        let saved = Set(page.compactMap(\.clientId))
+        let pending = current.filter { m in
+            guard m.id.hasPrefix("local-"), let cid = m.clientId else { return false }
+            return !saved.contains(cid)
+        }
+        return chronological(page + pending)
+    }
+
     /// Oldest first, the order a chat reads in, whatever order the server or the socket delivered.
     /// Stable, so same-second messages keep their arrival order; undated ones stay where they are.
     static func chronological(_ list: [AgentChatMessage]) -> [AgentChatMessage] {
@@ -100,19 +113,45 @@ final class ChatStore: ObservableObject {
         guard !trimmed.isEmpty, !isSending else { return }
         isSending = true
         let clientId = UUID().uuidString
-        // Optimistic local echo; the server's streamed reply follows over the socket.
+        // Optimistic local echo; message.done (same clientId) replaces it with the saved copy.
         messages.append(AgentChatMessage(id: "local-\(clientId)", role: "user", text: trimmed,
-                                         channel: "chat", createdAt: Date(), tools: nil))
+                                         channel: "chat", createdAt: Date(), tools: nil, clientId: clientId))
+        post(text: trimmed, clientId: clientId)
+    }
+
+    /// Resend a failed message with the SAME clientId: if the first POST did reach the server, it
+    /// recognises the clientId and does not save or answer it twice.
+    func retry(_ message: AgentChatMessage) {
+        guard let clientId = message.clientId, failedClientIds.contains(clientId), !isSending else { return }
+        isSending = true
+        failedClientIds.remove(clientId)
+        post(text: message.text, clientId: clientId)
+    }
+
+    private func post(text: String, clientId: String) {
         struct Body: Encodable { let text: String; let clientId: String }
         Task {
             defer { isSending = false }
             do {
-                let _: AgentSendResponse = try await AgentAPI.shared.post(
-                    "/conversations/default/messages", body: Body(text: trimmed, clientId: clientId))
+                let response: AgentSendResponse = try await AgentAPI.shared.post(
+                    "/conversations/default/messages", body: Body(text: text, clientId: clientId))
+                // A recognised resend gets no message.done, so take the saved id from the response.
+                if let savedId = response.userMessageId, let i = localIndex(clientId) {
+                    if messages.contains(where: { $0.id == savedId }) {
+                        messages.remove(at: i)
+                    } else {
+                        messages[i].id = savedId
+                    }
+                }
             } catch {
-                errorMessage = NutritionStore.describe(error)
+                // The bubble carries the failure ("Not sent — tap to retry"); no second banner for it.
+                if localIndex(clientId) != nil { failedClientIds.insert(clientId) }
             }
         }
+    }
+
+    private func localIndex(_ clientId: String) -> Int? {
+        messages.firstIndex(where: { $0.id == "local-\(clientId)" })
     }
 
     // MARK: Socket events
@@ -140,6 +179,10 @@ final class ChatStore: ObservableObject {
                 }
                 if let i = messages.firstIndex(where: { $0.id == message.id }) {
                     messages[i] = stored
+                } else if let cid = message.clientId, let i = localIndex(cid) {
+                    // The saved copy of a message this app sent: replace the local echo in place.
+                    messages[i] = stored
+                    failedClientIds.remove(cid)
                 } else {
                     messages = Self.chronological(messages + [stored])
                 }

@@ -1,5 +1,7 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
+import MarkdownUI
 import StrandDesign
 
 // MARK: - Chat tab
@@ -66,8 +68,10 @@ struct ChatView: View {
                         }
 
                         if let streamingId = store.streamingId {
+                            // Plain text while streaming: half a Markdown list or `**` re-lays out
+                            // on every delta. The finished message renders as Markdown.
                             assistantBubble(text: store.streamingText + " ▍",
-                                            chips: store.toolChips[streamingId] ?? [])
+                                            chips: store.toolChips[streamingId] ?? [], markdown: false)
                                 .id(streamingId)
                         }
                     }
@@ -164,38 +168,114 @@ struct ChatView: View {
     @ViewBuilder
     private func bubble(for message: AgentChatMessage) -> some View {
         if message.role == "user" {
-            HStack {
-                Spacer(minLength: 48)
+            userBubble(message)
+        } else if message.role == "assistant" {
+            assistantBubble(text: message.text, chips: message.tools ?? store.toolChips[message.id] ?? [])
+        } else if message.role == "system" {
+            // The server's own notices: "not configured", an agent error, an approval's outcome. Hiding
+            // them left the user's message sitting unanswered.
+            SystemNotice(text: message.text)
+        }
+    }
+
+    private func userBubble(_ message: AgentChatMessage) -> some View {
+        let failed = message.clientId.map { store.failedClientIds.contains($0) } ?? false
+        return HStack {
+            Spacer(minLength: 48)
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(message.text)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.surfaceBase)
+                    .textSelection(.enabled)
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(StrandPalette.accent))
+                        .fill(StrandPalette.accent.opacity(failed ? 0.5 : 1)))
+                    .contextMenu { copyButton(message.text) }
+                if failed {
+                    Button {
+                        store.retry(message)
+                    } label: {
+                        Label("Not sent — tap to retry", systemImage: "exclamationmark.circle")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.metricRose)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.isSending)
+                }
             }
-        } else if message.role == "assistant" {
-            assistantBubble(text: message.text, chips: message.tools ?? store.toolChips[message.id] ?? [])
         }
-        // system messages are intentionally not rendered in the chat stream
     }
 
-    private func assistantBubble(text: String, chips: [AgentChatMessage.ToolRef]) -> some View {
+    private func assistantBubble(text: String, chips: [AgentChatMessage.ToolRef], markdown: Bool = true) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 8) {
                 if !chips.isEmpty {
                     // Tool activity chips, newest last: "Checked Brightspace" etc.
                     FlowChips(chips: chips)
                 }
-                Text(text)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if markdown {
+                    // Agent replies are Markdown (bold, lists, headings); same theme as Coach.
+                    Markdown(text)
+                        .markdownTheme(.strand)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(text)
+                        .font(StrandFont.body)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(StrandPalette.surfaceInset))
+            .contextMenu { copyButton(text) }
             Spacer(minLength: 48)
         }
+    }
+
+    private func copyButton(_ text: String) -> some View {
+        Button {
+            UIPasteboard.general.string = text
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+    }
+}
+
+/// A centred notice for a server "system" message. Failures ("Sorry — the agent hit an error",
+/// "Approved, but it failed: …", the agent not being configured) get a warning triangle; everything
+/// else (an approval that went through) a shield check.
+private struct SystemNotice: View {
+    let text: String
+
+    private var isFailure: Bool {
+        text.hasPrefix("Sorry") || text.hasPrefix("Approved, but it failed")
+            || text.hasPrefix("The assistant is not configured")
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: isFailure ? "exclamationmark.triangle.fill" : "checkmark.shield")
+                .foregroundStyle(isFailure ? StrandPalette.metricRose : StrandPalette.textSecondary)
+            Text(text)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .multilineTextAlignment(.leading)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(StrandFont.footnote)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Capsule().fill(StrandPalette.surfaceInset))
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = text
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
     }
 }
 
