@@ -489,7 +489,7 @@ struct RootTabView: View {
             ScreenScaffold(title: "More", subtitle: "Everything else, one tap away",
                            onRefresh: { await repo.refresh() },
                            topBackground: liquidScaffoldSky()) {
-                // Trimmed to the screens this build is used for (33 rows → 15). The removed screens'
+                // Trimmed to the screens this build is used for (33 rows → 16). The removed screens'
                 // MoreDestination cases stay, so deep links and notifications that push them still work.
                 moreSection("Agent") {
                     // Chat, Tasks, Inbox and Approvals live in the Jarvis tab; More keeps the agent's
@@ -510,6 +510,8 @@ struct RootTabView: View {
                 }
                 moreSection("App") {
                     MoreRow("Alarms", "alarm.fill", .alarms)
+                    // Strap double-tap action + sensitivity, wrist alerts, haptics and wear reactions.
+                    MoreRow("Automations", "wand.and.stars", .automations)
                     MoreRow("Data Sources", "externaldrive.fill", .dataSources)
                     MoreRow("Backup & Sync", "externaldrive.fill.badge.icloud", .backupSync)
                     // The diagnostics + bug-report hub.

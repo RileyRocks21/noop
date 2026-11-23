@@ -190,6 +190,8 @@ final class AppModel: ObservableObject {
     let stressNudgeCenter = StressNudgeCenter()
 
     private var lastDoubleTapAt: Date = .distantPast
+    /// Counts strap double-taps toward the user's `doubleTapSensitivity` confirmation.
+    private var doubleTapGate = DoubleTapGate()
     private var lastCoachZone: Int = -1
     // L3 stress-onset detector state: a rolling R-R buffer + the replay-safe detector state (persisted
     // via BiofeedbackPrefs so a relaunch can't re-fire), carried verbatim between evaluations.
@@ -1801,12 +1803,37 @@ final class AppModel: ObservableObject {
         }
         lastDoubleTapAt = now
         if let override = strapDoubleTapOverride {
+            // The Lift Log claim keeps its single double-tap: the sensitivity gate does not apply to it.
+            doubleTapGate.reset()
             live.append(log: Self.stamped("Double-tap → Lift Log: next"))
             override()
             return
         }
-        live.append(log: Self.stamped("Double-tap → \(behavior.doubleTapAction.label)"))
-        runMacAction(behavior.doubleTapAction, shortcut: behavior.doubleTapShortcut)
+        let action = behavior.doubleTapAction
+        #if os(iOS)
+        // A double-tap while the Find iPhone siren is sounding silences it, at any sensitivity.
+        if action == .findPhone, FindPhoneSound.isPlaying {
+            doubleTapGate.reset()
+            FindPhoneSound.stop()
+            live.append(log: Self.stamped("Double-tap → stopped the Find iPhone siren"))
+            return
+        }
+        #endif
+        guard action != .none else {
+            doubleTapGate.reset()
+            live.append(log: Self.stamped("Double-tap → \(action.label)"))
+            return
+        }
+        doubleTapGate.sensitivity = behavior.doubleTapSensitivity
+        switch doubleTapGate.register(at: now) {
+        case .fire:
+            live.append(log: Self.stamped("Double-tap → \(action.label)"))
+            runMacAction(action, shortcut: behavior.doubleTapShortcut)
+        case let .armed(count, required, window):
+            live.append(log: Self.stamped("Double-tap \(count)/\(required) — waiting for confirmation (\(Int(window)) s window)"))
+            // Only the first tap of a sequence buzzes: a buzz per tap would blur into the action's own.
+            if count == 1, behavior.doubleTapArmBuzz { buzz(loops: 1) }
+        }
     }
 
     /// Run a configured Mac action. In-app actions (buzz/moment) stay on-device; lock + shortcuts

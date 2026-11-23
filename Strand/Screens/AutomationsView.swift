@@ -139,6 +139,9 @@ struct AutomationsView: View {
                 if behavior.doubleTapAction == .runShortcut {
                     shortcutField(String(localized: "Shortcut name"), text: $behavior.doubleTapShortcut)
                 }
+                if behavior.doubleTapAction != .none {
+                    doubleTapSensitivityRow
+                }
                 HStack {
                     Button {
                         model.runMacAction(behavior.doubleTapAction, shortcut: behavior.doubleTapShortcut)
@@ -156,6 +159,36 @@ struct AutomationsView: View {
                     momentsView
                 }
             }
+        }
+    }
+
+    /// The software confirmation on top of the strap's own (untunable) gesture detector: how many
+    /// double-taps it takes to run the action, and whether the first of several buzzes back.
+    private var doubleTapSensitivityRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Sensitivity").font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                Spacer()
+                Picker("Sensitivity", selection: $behavior.doubleTapSensitivity) {
+                    ForEach(DoubleTapSensitivity.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+            }
+            Text(behavior.doubleTapSensitivity.help)
+                .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            if behavior.doubleTapSensitivity != .standard {
+                ToggleRow(label: String(localized: "Buzz when armed"),
+                          help: String(localized: "A short buzz after the first double-tap tells you to tap again to confirm."),
+                          isOn: $behavior.doubleTapArmBuzz)
+            }
+            #if os(iOS)
+            if behavior.doubleTapAction == .findPhone {
+                Text("While the siren is playing, a single double-tap stops it.")
+                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            #endif
         }
     }
 
