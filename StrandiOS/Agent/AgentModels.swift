@@ -166,6 +166,53 @@ struct AgentSettings: Codable, Equatable {
     var icalUrl: String?
 }
 
+/// Phone-call policy (GET/PUT /calls/settings → `settings`). Optional fields like the rest of the
+/// contract; PUT merges, so a draft only has to carry what it changes.
+struct AgentCallSettings: Codable, Equatable {
+    struct QuietHours: Codable, Equatable {
+        var start: String?       // "22:30"
+        var end: String?         // "07:00"
+    }
+    var wakeEnabled: Bool?
+    /// "mon"…"sun" → "HH:mm", or null for no wake call that day. Nil values encode as JSON null,
+    /// which is how a cleared day reaches the server.
+    var wakeTimes: [String: String?]?
+    var urgentEnabled: Bool?
+    var remindersEnabled: Bool?
+    var quietHours: QuietHours?
+    var maxPerDay: Int?
+    var minGapMinutes: Int?
+}
+
+/// GET/PUT /calls/settings.
+struct AgentCallSettingsResponse: Codable, Equatable {
+    /// True when the server has everything it needs to dial (CALLS_ENABLED, OWNER_PHONE, trunk, LiveKit).
+    var configured: Bool
+    /// The owner's number, masked ("+1 ••• ••• 0199").
+    var ownerNumber: String?
+    /// The .env keys still missing (names only).
+    var missing: [String]?
+    var settings: AgentCallSettings
+}
+
+/// One dial attempt (GET /calls). A retry after no answer is its own row with attempt > 1.
+struct AgentCall: Codable, Identifiable, Equatable {
+    var id: String
+    var kind: String?            // "wake" | "urgent" | "reminder" | "test" | "scheduled"
+    var reason: String?
+    var status: String?          // "ringing" | "answered" | "no_answer" | "failed" | "completed"
+    var attempt: Int?
+    var startedAt: Date?
+    var answeredAt: Date?
+    var endedAt: Date?
+    var durationSeconds: Int?
+    var error: String?
+}
+
+struct AgentCallsPage: Codable {
+    var calls: [AgentCall]
+}
+
 // MARK: - Envelope helpers
 
 struct AgentPairResponse: Codable {

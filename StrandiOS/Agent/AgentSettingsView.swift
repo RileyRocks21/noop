@@ -5,8 +5,8 @@ import StrandDesign
 // MARK: - Agent Settings (More → Agent Settings)
 //
 // One screen for the noop-agent backend's owner controls: integrations (with per-provider
-// connect), the Brightspace iCal feed, quiet hours + per-category notification levels, the market
-// watchlist, and the agent's long-term Memories. Edits stage in a local draft and PUT the whole
+// connect), the Brightspace iCal feed, quiet hours + per-category notification levels, phone calls
+// (AgentPhoneCallsSection), the market watchlist, and the agent's long-term Memories. Edits stage in a local draft and PUT the whole
 // settings object, so one change never drops the rest.
 
 struct AgentSettingsView: View {
@@ -87,6 +87,7 @@ struct AgentSettingsView: View {
             feedSection
             quietHoursSection
             levelsSection
+            AgentPhoneCallsSection()
             watchlistSection
             memoriesSection
             liveBrowserSection
